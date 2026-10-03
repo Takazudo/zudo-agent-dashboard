@@ -37,6 +37,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
+      - name: Install isolated browser PTY fixture dependency
+        run: sudo apt-get update && sudo apt-get install -y tmux
       - run: npm ci
       - run: npx playwright-core install --with-deps chromium
       - run: npm run test:browser

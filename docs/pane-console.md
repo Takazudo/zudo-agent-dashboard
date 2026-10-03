@@ -1,104 +1,141 @@
-# Local pane viewer (draft)
+# Human-operated local pane console (draft)
 
-This branch depends on PR #2 (`feat/multi-device-hub`). It adds an **optional,
-read-only pane snapshot viewer**, not the requested full interactive terminal.
-Nothing is enabled by default. The authenticated multi-device hub remains
-observation-only; this viewer is available only through a local collector's
-literal loopback address. Mobile layout is tested, but phone/network access is
-not provided by this change.
+This feature depends on PR #2 (`feat/multi-device-hub`). It adds an **optional
+external controller for an existing tmux pane**, including its shell. It does not
+own or start the pane's processes. If an agent exits to a shell in the same pane,
+input continues to that shell as expected. Input may execute shell commands.
 
-## What an operator can do
+The console is off by default. A private local policy separately permits viewing
+or control. Every connection starts read-only and requires an explicit **Enable
+control of this pane** action, even when the policy permits input. Only one lease
+can control a given pane at a time. The authenticated multi-device hub stays
+observation-only. No remote listener, proxy route, or network access is added.
 
-After separately approved activation, expand a current local run on the dashboard
-and select **View read-only pane snapshot**. The viewer requires its own operator
-login. Confirm the displayed project, machine, and complete run ID, then select
-**Connect to selected run**. **Refresh screen** requests another snapshot.
+## Operator workflow and delivered capabilities
 
-The server resolves the run to a unique pane, retaining boot identity, tmux server
-PID/start time, pane ID, root PID/start time, and agent PID/start time. It rechecks
-that complete identity before and after each capture. Missing, ambiguous,
-restarted, or changed targets fail closed and revoke the lease. Leases expire
-120 seconds after opening; refreshing does not renew them. At most eight leases
-and sixteen HTTP requests are active, with a single console operation at a time.
-Each subprocess has a three-second deadline and 256 KiB output cap. HTTP bodies
-are limited to 32 KiB. The viewer fetches at most 101 visible rows, no scrollback.
+Expand a current local run in the dashboard and select **Open pane console**.
+After operator authentication, select an existing pane from an allowed project.
+The initial run is a selection aid, not the control target. The console can also
+select shell panes without an agent. It shows project, machine, server identity,
+pane ID, full pane identity, and the latest foreground process name and dimensions.
+Connect, inspect the pane, then explicitly enable control if authorized.
 
-The screen belongs to the **pane**, so it may contain text left there before the
-selected agent started. Content is rendered as plain text; control/format
-characters are removed. No ANSI, links, clipboard commands, or HTML are executed.
-Screen text is never stored in SQLite, forwarded, or logged by the dashboard.
-Only synthetic screen content is used in QA screenshots. Browser memory holds
-the latest snapshot; target changes, close, expiry, and detected disconnects
-clear it. There is no polling or automatic reconnect. A quiet network loss is
-noticed by the next request, the browser offline event, or lease expiry.
+- **Compose text / Send** supports Unicode, multiline text, and optional Enter.
+  Newlines and Enter may execute commands; there is no content inspection.
+- **Interactive keyboard** sends typed text directly, including IME composition.
+  It supports Enter, Tab, Backspace, Delete, Escape, arrows, Home/End, Page Up/Down,
+  and ASCII Ctrl combinations. Mobile buttons provide Enter, Tab, Esc, Ctrl-C,
+  and arrows. Standard ANSI arrow sequences are sent; not every terminal's
+  application-specific key encoding is emulated.
+- **Pane size** explicitly requests 20–300 columns and 5–200 rows. This changes
+  the shared tmux layout and is visible to other clients; tmux can clamp it.
+- Output is a **plain-text screen snapshot refreshed every 500 ms**, at most 200
+  visible rows. This is real tmux/PTY input with snapshot rendering, not a full
+  streaming terminal emulator. Colors, scrollback, mouse forwarding, function
+  keys, and clipboard/OSC handling are not implemented. Slow operations reduce
+  refresh frequency; the client never overlaps requests or accumulates screens.
 
-## Why Send is unavailable
+Changing selection, closing, expiry, or a detected disconnect clears visible
+text and unsent input. Reconnection is manual and starts read-only. A quiet
+network loss is detected by the next screen request or expiry. The initial
+selection list is refreshed by reloading the page. Closing or expiring a lease
+closes only the dashboard's tmux control client; it does not terminate the pane
+or detach another user's client.
 
-The handoff implementation checked process metadata, then asked tmux to send
-keys. An agent could exit between those operations and its old shell could
-receive the text. A second check cannot undo input already delivered. The tmux
-command queue does not make the external agent-generation check atomic.
-See the upstream [tmux command execution documentation](https://man.openbsd.org/tmux.1#COMMAND_PARSING_AND_EXECUTION).
+## Identity, authorization, and delivery
 
-That sender has been removed. `/api/console/send` always rejects requests; even
-`allow_input: true` is rejected at startup. The UI has a disabled, explicitly
-labeled Send control. There is no interactive PTY, command execution endpoint,
-resize, control-key support, remote terminal transport, or input replay. A future
-control implementation needs a broker that owns the exact run's PTY lifetime
-and cannot fall through to a shell or replacement run. It needs separate design,
-implementation, review, and activation approval; changing a flag is insufficient.
+The server binds each lease to machine/boot identity, tmux server PID/start time,
+pane ID, and pane-root PID/start time. Foreground process changes and shell cwd
+changes do not revoke that already authorized pane. Project roots constrain
+initial selection, not what an authorized terminal user can do inside its shell.
+They are **not a filesystem sandbox**. Pane respawn/replacement or a server
+restart invalidates the target; the user must select and connect again.
 
-## Proposed activation for later approval — not performed
+Each lease owns a connection to the existing tmux server using control mode,
+`no-output` and `ignore-size`. It never reconnects or creates a server. Metadata
+validation, capture, send, and resize use that same connection. Before a mutation,
+the complete stored identity is revalidated; inside tmux's command queue an
+additional pane PID/alive check guards respawn. Input bytes are encoded as hex
+arguments to `send-keys`, never interpolated as tmux/shell commands. The existing
+pane interprets those bytes normally. No client-selected executable, shell,
+socket, process ID, or raw tmux command is accepted by the HTTP API.
 
-First approve the exact local machine, registered project IDs, operator identity,
-policy path, and loopback port. Activation reveals pane content and is a separate
-action from enabling ordinary metadata observations.
+Opening a control-mode client is a real tmux attachment: existing tmux
+client-attachment hooks may run. It does not switch the pane, alter sizing on
+attach, or create a persistent service. Check local hook behavior when reviewing
+activation. See [upstream tmux documentation](https://man.openbsd.org/tmux.1).
 
-1. The human operator supplies a high-entropy secret (at least 32 random bytes)
-   via their existing secret-management process. Never reuse the public QA
-   password, a hub/device credential, or a human-memorable password. The policy
-   uses SHA-256 as a verifier for that high-entropy secret, not password stretching.
-2. The operator writes an owner-only regular JSON file, mode `0600`, outside the
-   repository, containing exactly `identity`, `password_sha256` (64 lowercase
-   hexadecimal characters), `projects` (explicit configured project IDs), and
-   `allow_input: false`. Symlinks and public files are refused. No real policy or
-   credential was generated during development.
-3. After approval, start the local foreground process with the existing explicit
-   config and database paths:
+Mutations share a strictly increasing per-lease sequence. The sequence is
+consumed before dispatch; duplicates/out-of-order operations revoke the lease.
+A failed/uncertain mutation revokes it too. Acknowledgment means **sent to the
+pane**, not that the command succeeded. Browser input is bounded to 4096 UTF-8
+bytes waiting plus one request of at most 4096 bytes in flight. Nothing is
+retried or replayed after failure, target changes, expiry, or reconnect. Input
+already delivered cannot be undone by closing the page.
+
+Leases expire after 120 seconds and are cleaned up even without more HTTP
+requests. At most eight leases and sixteen HTTP requests are active; a single
+console operation runs at a time. Transactions have a three-second I/O deadline
+and 256 KiB response cap. HTTP bodies are capped at 32 KiB. One screen replaces
+the previous screen, so there is no unbounded output buffer. The renderer treats
+pane content as plain text and strips control/format characters.
+
+Authentication uses one explicit operator principal and a high-entropy secret
+verifier. Exact loopback Host, same-origin POST, and bootstrap CSRF proof are
+required. Duplicate security headers and WebSocket upgrades are rejected. No
+CORS access is enabled. Pane input/output is excluded from SQLite, event history,
+forwarding, browser storage, and application logs. A pane can show text predating
+the selected run. The operator/browser and local tmux environment still see it.
+All committed test data and published test screenshots are synthetic.
+
+## Exact proposed activation — requires later approval; not performed
+
+Approve the machine, configured project IDs, operator identity, private policy
+path, loopback port, and **view-only versus input/resize permission** explicitly.
+Approval to implement this feature is not live activation approval.
+
+1. The human operator supplies a fresh high-entropy secret (at least 32 random
+   bytes) through their existing secret-management process. Do not reuse public
+   fixture passwords or hub/device credentials. SHA-256 is used as a verifier
+   for this secret, not as password stretching for a memorable password.
+2. The human writes an owner-only regular file, mode `0600`, outside the repo,
+   containing exactly `identity`, `password_sha256` (64 lowercase hex digits),
+   `projects` (explicit configured IDs), and `allow_input`. Set `allow_input:
+   false` for viewing only; set it to `true` **only after separate approval of
+   human input and resizing**. No real policy or credential was generated here.
+3. Following approval, start the foreground process with the approved paths:
 
    ```text
    python -m zudo_agent --config /approved/config.json --db /approved/observations.sqlite3 serve --port 8765 --console-policy /approved/private/pane-policy.json
    ```
 
-4. Visit `http://127.0.0.1:8765` directly on that machine. Browser Basic login is
-   limited to the local viewer; use a private browser profile and close it when
-   finished because browsers cache Basic credentials. Host checks allow only
-   literal loopback names with the bound port. POST requires exact matching
-   Origin plus a bootstrap CSRF value; WebSocket upgrades are rejected. This
-   implementation has one explicit local operator principal, not shared users.
-5. To revoke access, stop the process and restart without `--console-policy`.
-   Restart also invalidates every lease and CSRF value. Policy edits take effect
-   on restart. No persistent service or global hook is installed.
+4. Visit `http://127.0.0.1:8765` directly on that machine. Confirm the selected
+   pane and foreground state before explicitly enabling control. A private
+   browser profile is recommended because browsers cache Basic credentials;
+   close the profile afterward. Policy edits take effect on server restart.
+5. Revoke access by stopping the foreground process and restarting without
+   `--console-policy`. Restart invalidates leases, their clients, and CSRF proof.
 
-Do not proxy these endpoints through the existing x0x route. No identity-proxy,
-TLS termination, tailnet audience, ACL/firewall, DNS, persistent service, hub,
-or remote listener change is included or proposed here. Remote/mobile-device
-access and live input require a separate concrete approval and implementation.
-The assistant must never use this viewer to operate real user agents.
+Do not expose these endpoints through the existing x0x route. No TLS/proxy,
+tailnet audience, DNS, network/ACL/firewall, persistent service, global hook,
+or multi-device terminal transport change is included. Mobile layout is tested,
+but accessing it from a separate phone/network remains a separate proposal.
+The assistant must never use this feature to operate real user agents or evade
+an earlier denial of assistant input.
 
 ## Verification
 
-`bash scripts/check.sh` runs security, lifecycle, and existing regressions.
-On Linux with tmux present, the test creates its own unpredictable named server
-with `/dev/null` configuration, a temporary Python echo fixture labeled as
-synthetic, and a real PTY. It checks output, fixture input, pane replacement,
-closed panes, and input rejection in the product. Cleanup kills only that named
-fixture server. It never queries or writes to a default/user tmux server.
+`bash scripts/check.sh` includes authorization, control-off, explicit enablement,
+single controller, sequence/no-replay, stale identity, output bounds, and existing
+lifecycle/history/freshness/privacy regressions. Linux tests use a private
+unpredictable tmux socket, `/dev/null` configuration, temporary shell and synthetic
+agent-like child. They exercise real PTY input, shell continuation, resize,
+literal punctuation, pane replacement, and server restart. They never access a
+default/user server. Cleanup kills only the private fixture server.
 
-`npm ci && npm run test:browser` tests both the existing dashboard and the new
-viewer at desktop/mobile sizes using a synthetic authenticated local server.
-`CHROMIUM_PATH` optionally selects an already installed Chromium binary.
-The tests cover selection, text rendering, no controls, expiry, disconnect,
-manual reconnect, stale responses, and cleared output. Generated artifacts are
-ignored. Real macOS libproc verification remains in the existing macOS CI job;
-the real PTY test is Linux-only and explicitly skipped elsewhere.
+`npm ci && npm run test:browser` uses the same isolation for browser control QA,
+including desktop/mobile interaction and a response lost after input delivery.
+It also runs the original dashboard regressions. Linux and tmux are required for
+the console browser fixture; `CHROMIUM_PATH` can select an installed Chromium.
+Native macOS metadata and common console tests run in macOS CI; the real PTY
+fixture is Linux-only. No real-user terminal testing was performed.

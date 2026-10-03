@@ -13,3 +13,10 @@
 .console-page button:disabled { opacity: .55; cursor: not-allowed; }
 .pane-link { display: inline-block; margin-top: 12px; padding: 10px 0; }
 @media (max-width: 600px) { .console-page main { padding: 20px 12px; } .console-page header { display: block; } .console-controls { padding: 14px; } .console-actions button { width: 100%; } }
+.console-controls textarea { display: block; width: 100%; margin-top: 8px; padding: 12px; font: inherit; resize: vertical; }
+.console-controls .console-check { display: flex; gap: 10px; align-items: center; }
+.console-controls .console-check input { width: 20px; min-height: 20px; margin: 0; }
+#console-input, #console-keyboard { box-sizing: border-box; }
+
+#console-keys { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin-bottom: 20px; }
+#console-keys button { min-width: 0; }

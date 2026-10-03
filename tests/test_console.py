@@ -21,7 +21,7 @@ from zudo_agent.server import make_server
 
 PASSWORD = "public-disposable-fixture-password"
 POLICY = dict(identity="fixture", password_sha256=hashlib.sha256(PASSWORD.encode()).hexdigest(), projects=["example"], allow_input=False)
-TARGET = dict(project="example", run=digest("fixture"), machine="fixture", boot="fixture-boot", server=(123, "1"), pane="%0", root=(124, "2"), agent=(125, "3"))
+TARGET = dict(project="example", run=digest("fixture"), machine="fixture", boot="fixture-boot", server=(123, "1"), pane="%0", root=(124, "2"), session="$0", id=digest("pane"), foreground="sh", cols=80, rows=24)
 
 
 def config(root):
@@ -38,8 +38,10 @@ class Backend:
     def screen(self, target):
         if target not in self.current:
             raise ConsoleError(409, "stale")
-        return "SYNTHETIC PANE ONLY <script>not executable</script>"
+        return dict(screen="SYNTHETIC PANE ONLY <script>not executable</script>", foreground="sh", cols=80, rows=24)
     def send(self, *args):
+        self.sent.append(args)
+    def resize(self, *args):
         self.sent.append(args)
 
 
@@ -51,9 +53,10 @@ class ConsoleFixtures(unittest.TestCase):
         self.backend = Backend()
         self.now = 10
         self.console = Console(config(self.root), POLICY, self.backend, clock=lambda: self.now)
+        self.addCleanup(self.console.shutdown)
     def opened(self):
-        return self.console.handle("open", {k: TARGET[k] for k in ("project", "run", "machine")})
-    def test_policy_private_file_and_control_true_refused(self):
+        return self.console.handle("open", {k: TARGET[k] for k in ("project", "id", "machine")})
+    def test_policy_private_file_and_explicit_control_flag(self):
         path = self.root / "policy.json"
         path.write_text(json.dumps(POLICY)); path.chmod(0o600)
         self.assertEqual(load_policy(path, config(self.root)), POLICY)
@@ -62,8 +65,8 @@ class ConsoleFixtures(unittest.TestCase):
         path.chmod(0o644)
         with self.assertRaises(ValueError): load_policy(path, config(self.root))
         path.chmod(0o600); path.write_text(json.dumps(dict(POLICY, allow_input=True)))
-        with self.assertRaises(ValueError): load_policy(path, config(self.root))
-        with self.assertRaises(ValueError): Console(config(self.root), dict(POLICY, allow_input=True))
+        self.assertTrue(load_policy(path, config(self.root))["allow_input"])
+        self.assertTrue(Console(config(self.root), dict(POLICY, allow_input=True)).policy["allow_input"])
     def test_send_always_refused_including_replays_and_bad_sequences(self):
         lease = self.opened()["lease"]
         for sequence in (1, 1, 0, 2, -1, True):
@@ -71,11 +74,8 @@ class ConsoleFixtures(unittest.TestCase):
                 self.console.handle("send", dict(lease=lease, sequence=sequence, text="synthetic", enter=True))
             self.assertEqual(err.exception.status, 403)
         self.assertEqual(self.backend.sent, [])
-        with patch("zudo_agent.console.bounded") as call:
-            with self.assertRaises(ConsoleError): PaneBackend(config(self.root)).send(TARGET, "test", True)
-            call.assert_not_called()
     def test_stale_identity_at_each_generation_revokes_lease(self):
-        for field in ("boot", "server", "pane", "root", "agent", "run", "machine", "project"):
+        for field in ("boot", "server", "pane", "root", "id", "machine", "project"):
             self.backend.current = [copy.deepcopy(TARGET)]
             lease = self.opened()["lease"]
             self.backend.current = [dict(TARGET, **{field: "changed"})]
@@ -94,7 +94,7 @@ class ConsoleFixtures(unittest.TestCase):
         self.backend.current *= 2
         with self.assertRaises(ConsoleError): self.opened()
         for field in ("machine", "project"):
-            body = {k: TARGET[k] for k in ("project", "run", "machine")}; body[field] = "other"
+            body = {k: TARGET[k] for k in ("project", "id", "machine")}; body[field] = "other"
             with self.assertRaises(ConsoleError): self.console.handle("open", body)
     def test_lease_limit_and_no_request_queue(self):
         for _ in range(8): self.opened()
@@ -105,13 +105,52 @@ class ConsoleFixtures(unittest.TestCase):
     def test_bounded_pipe_and_nonzero_child(self):
         with self.assertRaises(ConsoleError): bounded([sys.executable, "-c", "print('x'*100)"], limit=16)
         with self.assertRaises(ConsoleError): bounded([sys.executable, "-c", "raise SystemExit(1)"])
-    def test_screen_sanitizes_controls_and_validates_after_capture(self):
-        backend = PaneBackend(config(self.root))
-        with patch.object(backend, "validate") as validate, patch("zudo_agent.console.bounded", return_value="hi\x1b\x7f\x85\u202e\n日本語"):
-            self.assertEqual(backend.screen(TARGET), "hi\n日本語")
-            self.assertEqual(validate.call_count, 2)
-        with patch.object(backend, "validate", side_effect=[None, ConsoleError(409, "changed")]), patch("zudo_agent.console.bounded", return_value="must not escape"):
-            with self.assertRaises(ConsoleError): backend.screen(TARGET)
+    def test_input_requires_policy_and_human_enablement_and_consumes_sequence(self):
+        self.console.policy = dict(POLICY, allow_input=True)
+        lease = self.opened()["lease"]
+        with self.assertRaises(ConsoleError): self.console.handle("send", dict(lease=lease, sequence=1, text="test"))
+        self.console.handle("control", dict(lease=lease, enabled=True))
+        self.assertEqual(self.console.handle("send", dict(lease=lease, sequence=1, text="日本語\r"))["sequence"], 2)
+        self.assertEqual(self.backend.sent[0][1], "日本語\r")
+        with self.assertRaises(ConsoleError): self.console.handle("send", dict(lease=lease, sequence=1, text="test"))
+        self.assertNotIn(lease, self.console.leases)
+        self.assertEqual(len(self.backend.sent), 1)
+
+    def test_uncertain_delivery_never_replays_and_reconnect_starts_read_only(self):
+        self.console.policy = dict(POLICY, allow_input=True)
+        lease = self.opened()["lease"]
+        self.console.handle("control", dict(lease=lease, enabled=True))
+        def uncertain(*args):
+            self.backend.sent.append(args)
+            raise OSError("lost reply")
+        with patch.object(self.backend, "send", side_effect=uncertain):
+            for _ in range(2):
+                with self.assertRaises(ConsoleError): self.console.handle("send", dict(lease=lease, sequence=1, text="once"))
+        self.assertEqual(len(self.backend.sent), 1)
+        new = self.opened()["lease"]
+        with self.assertRaises(ConsoleError): self.console.handle("send", dict(lease=new, sequence=1, text="once"))
+
+    def test_single_controller_and_expiry_cleanup(self):
+        self.console.policy = dict(POLICY, allow_input=True)
+        first, second = self.opened()["lease"], self.opened()["lease"]
+        self.console.handle("control", dict(lease=first, enabled=True))
+        with self.assertRaises(ConsoleError): self.console.handle("control", dict(lease=second, enabled=True))
+        self.console.expire(first)
+        self.console.handle("control", dict(lease=second, enabled=True))
+        self.console.shutdown()
+        self.assertEqual(self.console.leases, {})
+
+    def test_input_and_resize_bounds_before_dispatch(self):
+        self.console.policy = dict(POLICY, allow_input=True)
+        lease = self.opened()["lease"]
+        self.console.handle("control", dict(lease=lease, enabled=True))
+        for text in ("", "x" * 4097, None, "\ud800"):
+            with self.assertRaises((ValueError, UnicodeError)): self.console.handle("send", dict(lease=lease, sequence=1, text=text))
+        for cols, rows in ((0, 24), (301, 24), (80, 201), (True, 24)):
+            with self.assertRaises(ConsoleError): self.console.handle("resize", dict(lease=lease, sequence=1, cols=cols, rows=rows))
+        self.assertEqual(self.backend.sent, [])
+        self.console.handle("resize", dict(lease=lease, sequence=1, cols=100, rows=30))
+        self.assertEqual(self.backend.sent[-1][1:], (100, 30))
 
 
 class HttpFixtures(unittest.TestCase):
@@ -163,7 +202,7 @@ class HttpFixtures(unittest.TestCase):
             self.assertEqual(self.request("/api/console/screen", "POST", payload)[0], 400)
         self.assertEqual(self.backend.sent, [])
     def test_http_lease_screen_close_and_headers(self):
-        status, body, _ = self.request("/api/console/open", "POST", json.dumps({k: TARGET[k] for k in ("project", "run", "machine")}))
+        status, body, _ = self.request("/api/console/open", "POST", json.dumps({k: TARGET[k] for k in ("project", "id", "machine")}))
         self.assertEqual(status, 200); lease = json.loads(body)["lease"]
         status, body, headers = self.request("/api/console/screen", "POST", json.dumps(dict(lease=lease)))
         self.assertEqual(status, 200); self.assertIn(b"SYNTHETIC", body)
@@ -185,38 +224,66 @@ class HttpFixtures(unittest.TestCase):
 
 @unittest.skipUnless(shutil.which("tmux") and sys.platform == "linux", "Isolated tmux lifecycle fixture requires Linux and tmux")
 class RealTmuxFixtures(unittest.TestCase):
-    def test_private_pty_lifecycle_capture_and_reused_pane_rejection(self):
+    def test_shell_continuation_input_resize_replacement_restart_and_literal_bytes(self):
         with tempfile.TemporaryDirectory(prefix="zudo-console-fixture-") as directory:
             root = Path(directory)
             conf = config(root); conf["tmux_socket"] = "zudo-fixture-" + os.urandom(8).hex()
             command = ["tmux", "-L", conf["tmux_socket"], "-f", "/dev/null"]
-            # This is a disposable Python echo fixture, never an installed agent.
+            # A synthetic agent-like child exits back to its existing shell.
             script = root / "fixture.py"
-            script.write_text("import ctypes,sys\nctypes.CDLL(None).prctl(15,b'codex',0,0,0)\nprint('SYNTHETIC PTY READY',flush=True)\nfor line in sys.stdin:\n print('FIXTURE:'+line.strip(),flush=True)\n")
+            script.write_text("import ctypes,sys\nctypes.CDLL(None).prctl(15,b'codex',0,0,0)\nprint('SYNTHETIC PTY READY',flush=True)\ninput()\n")
             def tmux(*args):
                 return subprocess.run(command + list(args), check=True, capture_output=True, text=True, timeout=5).stdout.strip()
-            try:
-                pane = tmux("new-session", "-d", "-P", "-F", "#{pane_id}", "-c", str(root), sys.executable, str(script))
-                backend = PaneBackend(conf)
+            backend = PaneBackend(conf)
+            def wait_for(target, text):
                 end = time.monotonic() + 5
-                targets = []
                 while time.monotonic() < end:
-                    targets = backend.targets()
-                    if targets: break
+                    screen = backend.screen(target)["screen"]
+                    if text in screen: return screen
                     time.sleep(.05)
-                self.assertEqual(len(targets), 1)
-                target = targets[0]
-                self.assertIn("SYNTHETIC PTY READY", backend.screen(target))
-                # Only the test harness exercises PTY input; the product rejects it.
-                tmux("send-keys", "-t", pane, "-l", "public-fixture-line"); tmux("send-keys", "-t", pane, "Enter")
+                self.fail("Fixture output deadline exceeded")
+            try:
+                pane = tmux("new-session", "-d", "-P", "-F", "#{pane_id}", "-c", str(root), "sh")
+                target = backend.targets()[0]
+                backend.connect(target)
+                self.addCleanup(backend.disconnect, target)
+                backend.send(target, sys.executable + " " + str(script) + "\r")
+                wait_for(target, "SYNTHETIC PTY READY")
+                active = backend.targets()[0]
+                active["_channel"] = target["_channel"]
+                self.assertIsNotNone(active["run"])
+                self.assertEqual(target["id"], active["id"])
+                backend.send(active, "\r")
                 end = time.monotonic() + 5
-                while "FIXTURE:public-fixture-line" not in backend.screen(target) and time.monotonic() < end: time.sleep(.05)
-                self.assertIn("FIXTURE:public-fixture-line", backend.screen(target))
-                with self.assertRaises(ConsoleError): backend.send(target, "MUST-NOT-ARRIVE", True)
-                self.assertNotIn("MUST-NOT-ARRIVE", backend.screen(target))
-                tmux("respawn-pane", "-k", "-t", pane, sys.executable, str(script))
-                with self.assertRaises(ConsoleError): backend.screen(target)
-                tmux("kill-pane", "-t", pane)
-                with self.assertRaises((ConsoleError, OSError)): backend.screen(target)
+                while backend.targets()[0]["run"] is not None and time.monotonic() < end: time.sleep(.05)
+                self.assertIsNone(backend.targets()[0]["run"])
+                backend.send(active, "printf 'SHELL-CONTINUATION-OK\\n'\r")
+                wait_for(active, "SHELL-CONTINUATION-OK")
+                tmux("split-window", "-h", "-t", pane, "sh")
+                backend.resize(active, 50, 20)
+                self.assertEqual(backend.screen(active)["cols"], 50)
+                # Command-parser punctuation remains input bytes, never tmux commands.
+                backend.send(active, "echo 'semi; percent% quote\"'\r")
+                wait_for(active, "semi; percent% quote")
+                backend.send(active, "printf '%%exit\\n%%begin fake\\n%%error fake\\n'\r")
+                wait_for(active, "%error fake")
+                self.assertIn("%exit", backend.screen(active)["screen"])
+                original_validate = backend.validate
+                def replace_after_validation(target, channel):
+                    result = original_validate(target, channel)
+                    tmux("respawn-pane", "-k", "-t", pane, "sh")
+                    return result
+                with patch.object(backend, "validate", side_effect=replace_after_validation):
+                    with self.assertRaises(ConsoleError): backend.send(active, "RACE-MUST-NOT-ARRIVE\r")
+                with self.assertRaises(ConsoleError): backend.screen(active)
+                with self.assertRaises(ConsoleError): backend.send(active, "MUST-NOT-ARRIVE\r")
+                replacement = backend.targets()[0]
+                self.assertNotIn("MUST-NOT-ARRIVE", backend.screen(replacement)["screen"])
+                backend.connect(replacement)
+                self.addCleanup(backend.disconnect, replacement)
+                tmux("kill-server")
+                tmux("new-session", "-d", "-c", str(root), "sh")
+                with self.assertRaises((ConsoleError, OSError)): backend.send(replacement, "MUST-NOT-ARRIVE\r")
+                self.assertNotIn("MUST-NOT-ARRIVE", backend.screen(backend.targets()[0])["screen"])
             finally:
                 subprocess.run(command + ["kill-server"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)

@@ -132,7 +132,13 @@ def make_server(config, db_path, port=8765, sample=False, console_policy=None):
         def log_message(self, *_args):
             pass
 
-    return BoundedServer(("127.0.0.1", port), Handler)
+    class LocalServer(BoundedServer):
+        def server_close(self):
+            if console:
+                console.shutdown()
+            super().server_close()
+
+    return LocalServer(("127.0.0.1", port), Handler)
 
 
 def collect_loop(config, db_path, stop, interval=5):

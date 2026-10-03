@@ -71,7 +71,7 @@ function render() {
       if (hub) detail.append(el("p", "Compact forwarded snapshot; event history stays on the source device."));
       for (const event of run.recent_events.slice().reverse()) events.append(el("li", `${event.kind} · ${event.source} · ${age(event.at)}`));
       if (consoleEnabled && !sample && !hub && !isPrevious(run) && !isStale(run) && run.reachability === "present" && run.source !== "cloud-import") {
-        const link = el("a", "View read-only pane snapshot", "pane-link");
+        const link = el("a", "Open pane console", "pane-link");
         link.href = `/console.html#${new URLSearchParams({project: project.id, run: run.id})}`;
         detail.append(link);
       }
@@ -120,5 +120,5 @@ setInterval(refresh, 5000);
 
 fetch("/api/console/status", {cache: "no-store", signal: AbortSignal.timeout(4000)})
   .then(response => response.ok ? response.json() : null)
-  .then(info => { consoleEnabled = info?.enabled === true; if (consoleEnabled) { document.querySelector("footer span").textContent = "Optional read-only pane viewer · no agent controls"; render(); } })
+  .then(info => { consoleEnabled = info?.enabled === true; if (consoleEnabled) { document.querySelector("footer span").textContent = "Optional local pane console · explicit control policy"; render(); } })
   .catch(() => {});
