@@ -1,6 +1,7 @@
 """Loopback-only, GET-only UI. No remote assets, write APIs, or terminal access."""
 
 import json
+import sqlite3
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -24,11 +25,16 @@ def make_server(config, db_path, port=8765, sample=False):
                 if sample:
                     data = sample_snapshot()
                 else:
-                    store = Store(db_path, config)
+                    store = None
                     try:
+                        store = Store(db_path, config)
                         data = store.snapshot()
+                    except sqlite3.OperationalError:
+                        self.send_error(503, "Observations temporarily unavailable")
+                        return
                     finally:
-                        store.close()
+                        if store:
+                            store.close()
                 body = json.dumps(data).encode()
                 mime = "application/json"
             elif route in {"/", "/app.js", "/style.css"}:
@@ -53,20 +59,36 @@ def make_server(config, db_path, port=8765, sample=False):
     return ThreadingHTTPServer(("127.0.0.1", port), Handler)
 
 
+def collect_loop(config, db_path, stop, interval=5):
+    from .transport import Forwarder
+    store = None
+    forwarder = None
+    try:
+        while not stop.is_set():
+            try:
+                if store is None:
+                    store = Store(db_path, config)
+                    forwarder = Forwarder(store, config) if "transport" in config else None
+                discover(config, store)
+                if forwarder:
+                    forwarder.cycle()
+            except (sqlite3.OperationalError, OSError):
+                # Concurrent hook writers can briefly hold SQLite's write lock.
+                if store:
+                    store.close()
+                store = None
+                forwarder = None
+            stop.wait(interval)
+    finally:
+        if store:
+            store.close()
+
+
 def serve(config, db_path, port, sample=False):
     server = make_server(config, db_path, port, sample)
     stop = threading.Event()
 
-    def collect():
-        store = Store(db_path, config)
-        try:
-            while not stop.is_set():
-                discover(config, store)
-                stop.wait(5)
-        finally:
-            store.close()
-
-    worker = None if sample else threading.Thread(target=collect, daemon=True)
+    worker = None if sample else threading.Thread(target=collect_loop, args=(config, db_path, stop), daemon=True)
     if worker:
         worker.start()
     print(f"{'SAMPLE' if sample else 'LOCAL'} dashboard: http://127.0.0.1:{server.server_port}", flush=True)

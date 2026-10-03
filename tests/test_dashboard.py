@@ -2,6 +2,7 @@ import contextlib
 import copy
 import io
 import json
+import sqlite3
 import subprocess
 import tempfile
 import threading
@@ -15,7 +16,7 @@ from unittest.mock import patch
 from zudo_agent import cli
 from zudo_agent.collector import agent_descendant, discover, hook_event, parse_panes, run_identity
 from zudo_agent.model import digest, load_config, validate_event
-from zudo_agent.server import make_server
+from zudo_agent.server import collect_loop, make_server
 from zudo_agent.store import Store, import_cloud
 
 NOW = 1_700_000_000.0
@@ -25,7 +26,7 @@ class Fixtures(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        self.root = Path(self.tmp.name)
+        self.root = Path(self.tmp.name).resolve()
         self.config = dict(machine="test-machine", tmux_socket=None, stale_after=120,
                            projects={"example": dict(id="example", repository="github.com/example/project", roots=[str(self.root)])})
         self.db = self.root / "state.sqlite3"
@@ -131,6 +132,35 @@ class Fixtures(unittest.TestCase):
         raw["agent_id"] = "child"
         self.assertIsNone(hook_event(raw, "codex", self.config, NOW))
 
+    def test_named_claude_main_preserves_identity_lifecycle_and_privacy(self):
+        proc = dict(pid=100, parent=1, start="10", agent="claude")
+        raw = dict(session_id="synthetic-private-id", cwd=str(self.root),
+                   agent_type="synthetic-private-agent-name", prompt="SYNTHETIC-SECRET")
+        with patch("zudo_agent.collector.process", return_value=proc), patch("zudo_agent.collector.boot_id", return_value="fake-boot"):
+            for offset, (name, state) in enumerate([("SessionStart", "unknown"), ("UserPromptSubmit", "working"), ("Stop", "idle")]):
+                with self.subTest(event=name):
+                    payload = dict(raw, hook_event_name=name)
+                    event = hook_event(payload, "claude", self.config, NOW+offset)
+                    ordinary = dict(payload)
+                    del ordinary["agent_type"]
+                    self.assertEqual(event, hook_event(ordinary, "claude", self.config, NOW+offset))
+                    self.assertEqual(event["run_id"], run_identity("test-machine", "fake-boot", proc))
+                    self.assertEqual(set(event), {"project_id", "run_id", "machine", "source", "kind", "observed_at"})
+                    self.assertNotIn("synthetic-private", json.dumps(event))
+                    self.assertNotIn("SYNTHETIC-SECRET", json.dumps(event))
+                    self.store.ingest(event)
+                    self.assertEqual(self.run_state(NOW+offset)["state"], state)
+                    self.assertEqual(self.store.snapshot(NOW+offset)["projects"][0]["completion"], "unknown")
+
+    def test_subagent_id_rejected_with_or_without_agent_type(self):
+        for provider in ["claude", "codex"]:
+            for extra in [{}, {"agent_type": "fixture-child-profile"}]:
+                with self.subTest(provider=provider, extra=extra):
+                    raw = dict(session_id="fixture-parent", cwd=str(self.root), hook_event_name="Stop", agent_id="fixture-child", **extra)
+                    with patch("zudo_agent.collector.process") as lookup:
+                        self.assertIsNone(hook_event(raw, provider, self.config, NOW))
+                        lookup.assert_not_called()
+
     def test_unrecognized_question_is_not_inferred(self):
         raw = dict(session_id="test", cwd=str(self.root), hook_event_name="Notification", message="Can you choose an option?")
         self.assertIsNone(hook_event(raw, "claude", self.config, NOW))
@@ -161,6 +191,80 @@ class Fixtures(unittest.TestCase):
         with patch("zudo_agent.collector.command", side_effect=subprocess.TimeoutExpired("tmux", 3)):
             result = discover(self.config, self.store, NOW)
         self.assertEqual(result["status"], "disconnected")
+
+    def test_collector_recovers_after_actual_database_write_lock(self):
+        locked = threading.Event()
+        recovered = threading.Event()
+        stop = threading.Event()
+        blocker = sqlite3.connect(self.db)
+        self.addCleanup(blocker.close)
+        blocker.execute("BEGIN IMMEDIATE")
+        def open_store(*args):
+            store = Store(*args)
+            store.db.execute("PRAGMA busy_timeout=10")
+            return store
+        def scan(config, store):
+            event = self.event("discovered")
+            event["source"] = "tmux"
+            try:
+                store.discovery([event], True, 1, 0, NOW)
+            except sqlite3.OperationalError:
+                locked.set()
+                raise
+            recovered.set()
+        with patch("zudo_agent.server.Store", side_effect=open_store), patch("zudo_agent.server.discover", side_effect=scan):
+            worker = threading.Thread(target=collect_loop, args=(self.config, self.db, stop, .01), daemon=True)
+            worker.start()
+            try:
+                self.assertTrue(locked.wait(3), "Fixture did not hit the write lock")
+                self.assertTrue(worker.is_alive())
+                self.assertFalse(self.store.snapshot(NOW)["projects"][0]["runs"])
+                blocker.rollback()
+                self.assertTrue(recovered.wait(3), "Collector did not recover after the lock cleared")
+            finally:
+                blocker.rollback()
+                stop.set()
+                worker.join(3)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(self.run_state()["reachability"], "present")
+
+    def test_collector_retries_initial_store_failure(self):
+        stop = threading.Event()
+        attempts = []
+        def open_store(*args):
+            attempts.append(True)
+            if len(attempts) == 1:
+                raise sqlite3.OperationalError("fixture locked")
+            return Store(*args)
+        def scan(*_args):
+            stop.set()
+        with patch("zudo_agent.server.Store", side_effect=open_store), patch("zudo_agent.server.discover", side_effect=scan):
+            worker = threading.Thread(target=collect_loop, args=(self.config, self.db, stop, .01), daemon=True)
+            worker.start()
+            try:
+                self.assertTrue(stop.wait(3))
+            finally:
+                stop.set()
+                worker.join(3)
+        self.assertEqual(len(attempts), 2)
+
+    def test_snapshot_database_contention_returns_retryable_503(self):
+        server = make_server(self.config, self.db, port=0)
+        worker = threading.Thread(target=server.serve_forever, daemon=True)
+        worker.start()
+        url = f"http://127.0.0.1:{server.server_port}/api/snapshot"
+        try:
+            with patch("zudo_agent.server.Store", side_effect=sqlite3.OperationalError("private fixture detail")):
+                with self.assertRaises(urllib.error.HTTPError) as failed:
+                    urllib.request.urlopen(url, timeout=3)
+                self.assertEqual(failed.exception.code, 503)
+                self.assertNotIn(b"private fixture detail", failed.exception.read())
+            with urllib.request.urlopen(url, timeout=3) as response:
+                self.assertEqual(response.status, 200)
+        finally:
+            server.shutdown()
+            server.server_close()
+            worker.join(3)
 
     def test_presence_heartbeats_coalesce_without_erasing_lifecycle(self):
         self.store.ingest(self.event("turn-stop", NOW-1))

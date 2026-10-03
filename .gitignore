@@ -12,3 +12,6 @@ node_modules/
 test-results/
 *.setup-plan.json
 *.receipt.json
+hub.local.json
+*.token
+*-key.pem

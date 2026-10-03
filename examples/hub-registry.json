@@ -1,0 +1,11 @@
+{
+  "projects": [{"id": "my-project", "repository": "github.com/example/my-project"}],
+  "devices": [{
+    "machine": "my-laptop", "stream": "install-1",
+    "token_sha256": "REPLACE_WITH_DEVICE_TOKEN_SHA256",
+    "repositories": ["github.com/example/my-project"]
+  }],
+  "viewer_sha256": "REPLACE_WITH_SEPARATE_VIEWER_TOKEN_SHA256",
+  "allowed_hosts": ["127.0.0.1", "hub.example.ts.net"],
+  "stale_after": 120, "offline_after": 600
+}

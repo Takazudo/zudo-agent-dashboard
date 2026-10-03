@@ -1,5 +1,5 @@
 include README.md
-include docs/setup.md
+recursive-include docs *.md
 include package.json package-lock.json
 recursive-include scripts *.py *.sh *.cjs
 recursive-include examples *.json

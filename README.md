@@ -1,11 +1,11 @@
 # Zudo Agent Dashboard
 
 A read-only, local-first view of agent work across projects and individual runs.
-Python 3.11+ on Linux/WSL, SQLite, and a dependency-free browser UI. No agent
+Python 3.11+ on Linux/WSL or macOS, SQLite, and a dependency-free browser UI. No agent
 control API, transcript scraping, terminal capture, or public hosting.
 
-**v0.1:** tmux discovery and opt-in Claude Code / Codex hooks on one selected
-machine; cloud tasks through validated imports only. This is an observation
+**v0.2:** local tmux discovery and opt-in Claude Code / Codex hooks, plus an
+authenticated private hub for multiple devices; cloud tasks through validated imports only. This is an observation
 tool, not an assertion that a project is complete.
 
 ## Try the interface
@@ -21,6 +21,10 @@ Sample mode is prominently labeled, uses exclusively synthetic data, and does
 not open a database or run a collector. It is separate from live mode.
 
 ## Local observations
+
+For one shared dashboard across devices, see [multiple-device setup](docs/multiple-devices.md).
+It uses explicit registration and existing secure private transport. There is
+no automatic LAN scan, credential creation, network change or public deployment.
 
 ```sh
 cp examples/config.json config.local.json
@@ -77,13 +81,13 @@ The dashboard retains last evidence and connection/freshness labels rather than
 silently claiming success or changing disconnected runs to ended.
 
 Every scan lists **all sessions, windows, and panes** on the selected tmux server.
-The collector reads pane metadata plus `/proc/*/stat`, never `/proc/*/cmdline`
+The collector reads pane metadata plus Linux `/proc/*/stat` or macOS `libproc`, never process arguments
 or pane contents. It discovers the nearest unambiguous `claude` or `codex`
 process beneath a pane, including launches through a shell. Shell-only,
 ambiguous, or unregistered panes are counted as unassigned/no-agent.
 
-Run identity hashes the configured machine, Linux boot ID, PID, and process
-start time. A restarted agent in the same pane becomes a distinct run; PID reuse
+Run identity hashes the configured machine, PID and process start identity
+(Linux boot ID/start ticks or macOS absolute start time). A restarted agent in the same pane becomes a distinct run; PID reuse
 and machine reboot cannot silently revive an old run. tmux session/window names
 are not project identities. Native process names are recognized; wrappers whose
 only process name is `node` need hooks and otherwise remain unknown.
@@ -139,7 +143,7 @@ fixture-tested, not a claim of end-to-end live hook delivery.
 
 ## Cloud task imports and adapter boundary
 
-There is **no live cloud API integration in v0.1**. No supported authenticated
+There is **no live cloud API integration in v0.2**. No supported authenticated
 live task API was established in this executor. The UI and JSON always report
 `cloud.live_connected: false`, independent of imports. No internal tooling,
 private endpoints, or internal task IDs are used as a production integration.
@@ -147,8 +151,8 @@ private endpoints, or internal task IDs are used as a production integration.
 An eventual adapter should authenticate through a supported API, independently
 report connectivity/capabilities, map known task states to the following
 minimal observation schema, and preserve stable run IDs and timestamps for
-replays. It must not invent status from prose. Authentication and multi-machine
-transport are future work; JSON import is the honest current adapter boundary.
+replays. It must not invent status from prose. A supported live cloud-task
+integration remains future work; JSON import is the current cloud boundary.
 
 ```json
 {
@@ -211,8 +215,8 @@ sample isolation, loopback binding, Host validation, and read-only HTTP.
 
 ## Limits
 
-- One selected tmux server per collector/config. No SSH, authenticated
-  multi-machine aggregation, automatic server enumeration, or persistent daemon.
+- One selected tmux server per collector/config. Multi-device aggregation requires
+  the explicitly configured authenticated hub; no SSH automation, LAN scan or daemon.
 - tmux polling can miss short-lived runs between scans; hooks complement it.
 - Repository roots and labels are explicitly trusted configuration. Safe slugs
   prevent incidental leakage, but cannot detect a secret deliberately put into
@@ -221,6 +225,7 @@ sample isolation, loopback binding, Host validation, and read-only HTTP.
   SQLite history is local, retained until you remove the database while stopped;
   there is no long-term archival/retention UI. Intended for a modest personal
   workspace, not unbounded fleet telemetry.
-- GET endpoints are unauthenticated loopback only, with strict Host validation
-  and no CORS. Other processes running as your user can read local observations.
+- Local-mode GET endpoints remain unauthenticated loopback only. Hub GETs require
+  a separate viewer credential; ingestion requires device credentials. Both use
+  strict Host validation and no CORS. Local processes can read local observations.
 - No commands are sent to existing tmux panes, and no approval decisions are made.

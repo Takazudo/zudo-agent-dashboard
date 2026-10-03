@@ -52,7 +52,7 @@ def validate_event(raw, projects):
 
 def load_config(path):
     raw = json.loads(Path(path).read_text())
-    if set(raw) - {"machine", "projects", "tmux_socket", "stale_after"}:
+    if set(raw) - {"machine", "projects", "tmux_socket", "stale_after", "transport"}:
         raise ValueError("Unknown configuration field")
     machine = slug(raw["machine"])
     projects = {}
@@ -62,7 +62,7 @@ def load_config(path):
             raise ValueError("Project requires id, repository, roots")
         pid = slug(p["id"])
         repo = p["repository"]
-        if not isinstance(repo, str) or not REPO.fullmatch(repo) or ".." in repo:
+        if not isinstance(repo, str) or len(repo) > 256 or not REPO.fullmatch(repo) or ".." in repo:
             raise ValueError("Repository must be host/owner/repo without credentials or URL arguments")
         if pid in projects or repo.lower() in repos:
             raise ValueError("Duplicate project or repository identity; combine roots instead")
@@ -76,4 +76,8 @@ def load_config(path):
     stale = raw.get("stale_after", 120)
     if isinstance(stale, bool) or not isinstance(stale, int) or not 10 <= stale <= 86400:
         raise ValueError("stale_after must be 10..86400 seconds")
-    return dict(machine=machine, projects=projects, tmux_socket=socket, stale_after=stale)
+    config = dict(machine=machine, projects=projects, tmux_socket=socket, stale_after=stale)
+    if "transport" in raw:
+        from .transport import validate_transport
+        config["transport"] = validate_transport(raw["transport"])
+    return config

@@ -142,17 +142,25 @@ def doctor(binaries=None):
     binaries = binaries or {}
     system = platform.system()
     linux = system == "Linux" and Path("/proc/self/stat").exists()
+    mac = False
+    if system == "Darwin":
+        try:
+            from .native import library
+            library()
+            mac = True
+        except OSError:
+            pass
     return dict(os=system, wsl=linux and "microsoft" in platform.release().lower(),
-                supported=linux and sys.version_info >= (3, 11), python=platform.python_version(),
-                collector="linux-proc" if linux else "unsupported-native-process-collector",
+                supported=(linux or mac) and sys.version_info >= (3, 11), python=platform.python_version(),
+                collector="linux-proc" if linux else "darwin-libproc" if mac else "unsupported-native-process-collector",
                 tmux=version(binaries.get("tmux", "tmux"), "-V", "tmux"),
                 agents={p: version(binaries.get(p, p), "--version", p) for p in BASELINES},
-                cloud="import-only", multi_host=False)
+                cloud="import-only", multi_host="explicit-authenticated-hub")
 
 
 def require_supported(report, providers):
     if not report["supported"]:
-        raise SetupError("Setup requires Linux/WSL and Python 3.11+. Native macOS /proc collection is unsupported")
+        raise SetupError("Setup requires Linux/WSL or macOS with libproc, and Python 3.11+")
     if not report["tmux"]["supported"]:
         raise SetupError("tmux is missing or outside the tested 3.4..3.x range")
     for provider in providers:
@@ -219,7 +227,7 @@ def change(path, before, after, kind, owned):
     return dict(path=str(safe_path(path)), before=encoded(before), after=encoded(after), kind=kind, owned=owned)
 
 
-def build_plan(*, project, project_id, repository, machine, config, db, providers, binaries=None):
+def build_plan(*, project, project_id, repository, machine, config, db, providers, binaries=None, transport=None):
     project = Path(project).expanduser().resolve()
     if not project.is_dir() or not (project / ".git").exists() or project == Path.home().resolve():
         raise SetupError("Select an existing checkout root (.git directory or worktree file), not your home")
@@ -240,6 +248,9 @@ def build_plan(*, project, project_id, repository, machine, config, db, provider
     else:
         current = dict(machine=machine, projects=[])
     updated = copy.deepcopy(current)
+    if transport is not None:
+        from .transport import validate_transport
+        updated["transport"] = validate_transport(transport)
     original = next((p for p in current["projects"] if p["id"] == project_id), None)
     if any(p["id"] != project_id and any(Path(root).resolve() == project for root in p["roots"]) for p in current["projects"]):
         raise SetupError("Checkout root already registered under another project ID")
@@ -261,7 +272,8 @@ def build_plan(*, project, project_id, repository, machine, config, db, provider
         load_config(candidate)
     changes = []
     if current != updated or before is None:
-        changes.append(change(config, before, serial(updated), "config", dict(original=original, installed=entry)))
+        changes.append(change(config, before, serial(updated), "config", dict(original=original, installed=entry,
+                              transport_changed=current.get("transport") != updated.get("transport"))))
     runner = str(Path(__file__).with_name("hook_runner.py").resolve())
     python = str(Path(sys.executable).resolve())
     owner = fingerprint(dict(project=str(project), config=str(config), db=str(db), machine=machine))
@@ -295,10 +307,11 @@ def build_plan(*, project, project_id, repository, machine, config, db, provider
         if added:
             changes.append(change(target, existing, serial(merged), "hooks", added))
     plan = dict(schema_version=1, operation="setup", project=str(project), providers=providers,
-                selection=dict(machine=machine, project_id=project_id, repository=repository, config=str(config), db=str(db)),
+                selection=dict(machine=machine, project_id=project_id, repository=repository, config=str(config), db=str(db), transport=updated.get("transport")),
                 environment=report, commands=commands, changes=changes, guards=guards,
                 warnings=["Agent trust and global/admin policies are not changed or proven by setup.",
-                          "Per-machine collection only; cloud imports only; no multi-host aggregation."])
+                          "Transport requires separately provisioned credentials and secure connectivity; setup never pairs devices.",
+                          "Cloud imports only; hub must remain online to receive new observations."])
     return seal(plan)
 
 
@@ -306,12 +319,35 @@ def seal(plan):
     return dict(plan, approval=fingerprint(plan))
 
 
+def hub_plan(registry_path, candidate_path):
+    from .hub import validate_registry
+    if platform.system() not in {"Linux", "Darwin"}:
+        raise SetupError("Hub setup supports Linux/WSL and macOS")
+    target = safe_path(registry_path)
+    candidate_path = safe_path(candidate_path)
+    if target == candidate_path:
+        raise SetupError("Candidate must be separate from installed registry")
+    candidate_bytes = read(candidate_path)
+    candidate = parse(candidate_bytes)
+    parsed = validate_registry(candidate)
+    before = read(target)
+    previous = validate_registry(parse(before)) if before is not None else None
+    changes = [] if before is not None and parse(before) == candidate else [change(target, before, serial(candidate), "hub", {})]
+    return seal(dict(schema_version=1, operation="hub-setup", changes=changes,
+                     selection=dict(registry=str(target), devices=[dict(machine=d["machine"], stream=d["stream"], repositories=d["repositories"]) for d in candidate["devices"]],
+                                    projects=candidate["projects"], allowed_hosts=candidate["allowed_hosts"],
+                                    removed_devices=sorted(set(previous["devices"] if previous else {}) - set(parsed["devices"]))),
+                     guards=[dict(path=str(candidate_path), content=encoded(candidate_bytes))],
+                     warnings=["Review the full local candidate, including credential hashes and removed devices.",
+                               "This registers devices only. No token/certificate generation, pairing, listener or network configuration occurs."]))
+
+
 def verify_plan(plan, approval):
     actual = dict(plan)
     token = actual.pop("approval", None)
     if token != fingerprint(actual) or approval != token:
         raise SetupError("Approval token does not match this exact preview")
-    if plan.get("schema_version") != 1 or plan.get("operation") not in {"setup", "rollback"}:
+    if plan.get("schema_version") != 1 or plan.get("operation") not in {"setup", "hub-setup", "rollback"}:
         raise SetupError("Unknown setup plan format")
     return plan
 
@@ -399,6 +435,8 @@ def undo_hooks(current, added):
 
 def undo_config(current, owned):
     obj = parse(current)
+    if owned.get("transport_changed"):
+        return obj, ["Transport-enabled configuration was edited later; retained to avoid disconnecting other projects"]
     installed, original = owned["installed"], owned["original"]
     if not isinstance(obj.get("projects"), list):
         raise SetupError("Dashboard configuration changed shape; retain for manual review")
@@ -427,7 +465,7 @@ def rollback_plan(receipt_path):
     receipt = parse(receipt_bytes)
     source = receipt["plan"]
     verify_plan(source, source["approval"])
-    if source["operation"] != "setup":
+    if source["operation"] not in {"setup", "hub-setup"}:
         raise SetupError("Rollback only accepts an original setup receipt")
     changes, conflicts = [], []
     for item in reversed(source["changes"]):
@@ -440,6 +478,9 @@ def rollback_plan(receipt_path):
             continue
         if current == after:
             desired = before
+        elif item["kind"] == "hub":
+            conflicts.append(f"{item['path']}: registry edited later; retained for review")
+            continue
         else:
             try:
                 obj, warnings = (undo_hooks(current, item["owned"]) if item["kind"] == "hooks" else undo_config(current, item["owned"]))
@@ -512,6 +553,14 @@ def main():
     prepare.add_argument("--config", default=str(state / "config.json"))
     prepare.add_argument("--db", default=str(state / "observations.sqlite3"))
     prepare.add_argument("--out", required=True)
+    prepare.add_argument("--hub-url")
+    prepare.add_argument("--stream")
+    prepare.add_argument("--token-file")
+    prepare.add_argument("--ca-file")
+    hub_prepare = sub.add_parser("hub-plan", help="Preview a user-authored hub registration candidate; never generate credentials")
+    hub_prepare.add_argument("--registry", required=True)
+    hub_prepare.add_argument("--candidate", required=True)
+    hub_prepare.add_argument("--out", required=True)
     apply = sub.add_parser("apply")
     apply.add_argument("--plan", required=True)
     apply.add_argument("--approve", required=True, help="Exact SHA printed by the reviewed preview")
@@ -526,15 +575,28 @@ def main():
         if args.action == "doctor":
             result = doctor({p: getattr(args, p + "_bin") for p in ["claude", "codex", "tmux"]})
         elif args.action == "plan":
+            transport = None
+            if any([args.hub_url, args.stream, args.token_file, args.ca_file]):
+                if not all([args.hub_url, args.stream, args.token_file]):
+                    raise SetupError("Hub forwarding requires --hub-url, --stream and --token-file together")
+                transport = dict(hub_url=args.hub_url, stream=args.stream, token_file=args.token_file)
+                if args.ca_file:
+                    transport["ca_file"] = args.ca_file
             plan = build_plan(project=args.project, project_id=args.project_id, repository=args.repository,
                               machine=args.machine, config=args.config, db=args.db,
                               providers=["claude", "codex"] if args.provider == "both" else [args.provider],
-                              binaries={p: getattr(args, p + "_bin") for p in ["claude", "codex", "tmux"]})
+                              binaries={p: getattr(args, p + "_bin") for p in ["claude", "codex", "tmux"]}, transport=transport)
             output = safe_path(args.out)
             if any(str(output) == c["path"] for c in plan["changes"]) or output == safe_path(args.db):
                 raise SetupError("Preview output must not be a settings file or the database")
             save_plan(plan, output)
             result = dict(preview_summary(plan), plan_file=str(output), environment=plan["environment"], setup_performed=False)
+        elif args.action == "hub-plan":
+            plan = hub_plan(args.registry, args.candidate)
+            if safe_path(args.out) in {safe_path(args.registry), safe_path(args.candidate)}:
+                raise SetupError("Preview output must be separate from registry and candidate")
+            save_plan(plan, args.out)
+            result = dict(preview_summary(plan), plan_file=str(safe_path(args.out)), setup_performed=False)
         elif args.action == "apply":
             result = apply_plan(parse(read(args.plan)), args.approve, args.receipts)
         elif args.action in {"rollback-plan", "uninstall-plan"}:

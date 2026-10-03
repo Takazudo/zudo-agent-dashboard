@@ -1,6 +1,7 @@
-"""Bounded Linux /proc and tmux metadata reads. Never capture-pane or cmdline."""
+"""Linux /proc or macOS libproc plus tmux metadata. Never capture-pane or argv."""
 
 import os
+import platform
 import subprocess
 import time
 from pathlib import Path
@@ -13,6 +14,9 @@ def command(args):
 
 
 def process(pid):
+    if platform.system() == "Darwin":
+        from .native import mac_process
+        return mac_process(pid)
     try:
         text = Path(f"/proc/{int(pid)}/stat").read_text()
         comm = text[text.index("(") + 1:text.rindex(")")]
@@ -23,6 +27,9 @@ def process(pid):
 
 
 def processes():
+    if platform.system() == "Darwin":
+        from .native import mac_processes
+        return mac_processes()
     return {int(p.name): value for p in Path("/proc").iterdir()
             if p.name.isdigit() and (value := process(p.name))}
 
@@ -46,6 +53,9 @@ def agent_descendant(pid, table):
 
 
 def boot_id():
+    if platform.system() == "Darwin":
+        # libproc start times are absolute seconds + microseconds, not boot ticks.
+        return "darwin-absolute-start"
     return Path("/proc/sys/kernel/random/boot_id").read_text().strip()
 
 
@@ -132,8 +142,8 @@ def hook_event(raw, provider, config, now=None):
     kind = HOOKS.get(raw.get("hook_event_name"))
     if kind is None or not isinstance(raw.get("session_id"), str) or not isinstance(raw.get("cwd"), str):
         return None
-    # Child hooks may carry their parent's session id; do not let them stop the parent run.
-    if raw.get("agent_id") or raw.get("agent_type"):
+    # agent_id identifies a child; Claude --agent also sets agent_type on main sessions.
+    if raw.get("agent_id"):
         return None
     project = project_for(raw["cwd"], config)
     if project is None:
@@ -143,6 +153,8 @@ def hook_event(raw, provider, config, now=None):
         if proc is None or proc["agent"]:
             break
         proc = process(proc["parent"])
+    if proc is not None and not proc["agent"]:
+        proc = None
     run = (run_identity(config["machine"], boot_id(), proc) if proc is not None
            else digest(config["machine"], provider, raw["session_id"]))
     return dict(project_id=project, run_id=run, machine=config["machine"], source=provider,
