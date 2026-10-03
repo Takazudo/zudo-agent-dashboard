@@ -142,8 +142,8 @@ def hook_event(raw, provider, config, now=None):
     kind = HOOKS.get(raw.get("hook_event_name"))
     if kind is None or not isinstance(raw.get("session_id"), str) or not isinstance(raw.get("cwd"), str):
         return None
-    # Child hooks may carry their parent's session id; do not let them stop the parent run.
-    if raw.get("agent_id") or raw.get("agent_type"):
+    # agent_id identifies a child; Claude --agent also sets agent_type on main sessions.
+    if raw.get("agent_id"):
         return None
     project = project_for(raw["cwd"], config)
     if project is None:

@@ -131,6 +131,35 @@ class Fixtures(unittest.TestCase):
         raw["agent_id"] = "child"
         self.assertIsNone(hook_event(raw, "codex", self.config, NOW))
 
+    def test_named_claude_main_preserves_identity_lifecycle_and_privacy(self):
+        proc = dict(pid=100, parent=1, start="10", agent="claude")
+        raw = dict(session_id="synthetic-private-id", cwd=str(self.root),
+                   agent_type="synthetic-private-agent-name", prompt="SYNTHETIC-SECRET")
+        with patch("zudo_agent.collector.process", return_value=proc), patch("zudo_agent.collector.boot_id", return_value="fake-boot"):
+            for offset, (name, state) in enumerate([("SessionStart", "unknown"), ("UserPromptSubmit", "working"), ("Stop", "idle")]):
+                with self.subTest(event=name):
+                    payload = dict(raw, hook_event_name=name)
+                    event = hook_event(payload, "claude", self.config, NOW+offset)
+                    ordinary = dict(payload)
+                    del ordinary["agent_type"]
+                    self.assertEqual(event, hook_event(ordinary, "claude", self.config, NOW+offset))
+                    self.assertEqual(event["run_id"], run_identity("test-machine", "fake-boot", proc))
+                    self.assertEqual(set(event), {"project_id", "run_id", "machine", "source", "kind", "observed_at"})
+                    self.assertNotIn("synthetic-private", json.dumps(event))
+                    self.assertNotIn("SYNTHETIC-SECRET", json.dumps(event))
+                    self.store.ingest(event)
+                    self.assertEqual(self.run_state(NOW+offset)["state"], state)
+                    self.assertEqual(self.store.snapshot(NOW+offset)["projects"][0]["completion"], "unknown")
+
+    def test_subagent_id_rejected_with_or_without_agent_type(self):
+        for provider in ["claude", "codex"]:
+            for extra in [{}, {"agent_type": "fixture-child-profile"}]:
+                with self.subTest(provider=provider, extra=extra):
+                    raw = dict(session_id="fixture-parent", cwd=str(self.root), hook_event_name="Stop", agent_id="fixture-child", **extra)
+                    with patch("zudo_agent.collector.process") as lookup:
+                        self.assertIsNone(hook_event(raw, provider, self.config, NOW))
+                        lookup.assert_not_called()
+
     def test_unrecognized_question_is_not_inferred(self):
         raw = dict(session_id="test", cwd=str(self.root), hook_event_name="Notification", message="Can you choose an option?")
         self.assertIsNone(hook_event(raw, "claude", self.config, NOW))
