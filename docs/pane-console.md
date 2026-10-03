@@ -1,6 +1,6 @@
-# Human-operated local pane console (draft)
+# Human-operated local pane console
 
-This feature depends on PR #2 (`feat/multi-device-hub`). It adds an **optional
+Built on the multi-device observations introduced by PR #2, this is an **optional
 external controller for an existing tmux pane**, including its shell. It does not
 own or start the pane's processes. If an agent exits to a shell in the same pane,
 input continues to that shell as expected. Input may execute shell commands.
@@ -15,7 +15,8 @@ observation-only. No remote listener, proxy route, or network access is added.
 
 Expand a current local run in the dashboard and select **Open pane console**.
 After operator authentication, select an existing pane from an allowed project.
-The initial run is a selection aid, not the control target. The console can also
+The initial run is a selection aid, not the control target. If a linked run is no
+longer present, no replacement pane is selected; choose a pane explicitly. The console can also
 select shell panes without an agent. It shows project, machine, server identity,
 pane ID, full pane identity, and the latest foreground process name and dimensions.
 Connect, inspect the pane, then explicitly enable control if authorized.
@@ -23,7 +24,8 @@ Connect, inspect the pane, then explicitly enable control if authorized.
 - **Compose text / Send** supports Unicode, multiline text, and optional Enter.
   Newlines and Enter may execute commands; there is no content inspection.
 - **Interactive keyboard** sends typed text directly, including IME composition.
-  It supports Enter, Tab, Backspace, Delete, Escape, arrows, Home/End, Page Up/Down,
+  IME edits remain local until composition commits; they do not send premature
+  delete or Enter keys. It supports Enter, Tab, Backspace, Delete, Escape, arrows, Home/End, Page Up/Down,
   and ASCII Ctrl combinations. Mobile buttons provide Enter, Tab, Esc, Ctrl-C,
   and arrows. Standard ANSI arrow sequences are sent; not every terminal's
   application-specific key encoding is emulated.

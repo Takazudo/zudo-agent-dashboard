@@ -126,6 +126,7 @@
   keyboard.addEventListener("compositionend", () => { composing = false; const value = keyboard.value; keyboard.value = ""; enqueue(value); });
   keyboard.addEventListener("input", () => { if (!composing) { const value = keyboard.value; keyboard.value = ""; enqueue(value); } });
   keyboard.addEventListener("beforeinput", event => {
+    if (composing || event.isComposing) return;
     if (event.inputType === "deleteContentBackward" || event.inputType === "insertLineBreak") { event.preventDefault(); enqueue(event.inputType === "deleteContentBackward" ? "\x7f" : "\r"); }
   });
   keyboard.addEventListener("keydown", event => {
@@ -156,7 +157,15 @@
       panes();
       const initial = targets.find(t => t.project === selection.get("project") && t.run === selection.get("run"));
       if (initial) $("console-run").value = initial.id;
+      const unavailable = selection.has("run") && !initial;
+      if (unavailable) {
+        const placeholder = new Option("Select a pane explicitly", "", true, true);
+        placeholder.disabled = true;
+        $("console-run").add(placeholder, 0);
+        $("console-run").value = "";
+      }
       selected();
+      if (unavailable) status("The requested run is no longer present. Select an existing pane explicitly; no replacement was selected.");
     } catch { clear("Pane console unavailable. Enablement requires a separately approved local policy."); }
   })();
 })();

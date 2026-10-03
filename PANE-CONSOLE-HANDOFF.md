@@ -1,6 +1,6 @@
 # Pane console handoff
 
-This feature branch targets PR #2 (`feat/multi-device-hub`) and remains draft.
+The pane console builds on the multi-device hub from PR #2.
 The clarified product contract is an external controller for an existing tmux
 pane. Foreground agent exit back to its shell is expected terminal behavior.
 The initial run aids selection; it does not bind input to an agent lifetime.
@@ -18,7 +18,11 @@ See [operator documentation](docs/pane-console.md) for details and the exact
 later activation proposal. Source is independently authored. Real terminal QA
 uses only private disposable tmux/PTY fixtures and synthetic data/credentials.
 
-No merge, live activation, real-agent capture/input, production route, network
-configuration, real credentials, persistent service, or global hook change has
-been made or authorized here. The assistant must not use this feature to bypass
+Repository merges are authorized. Live activation remains a separate decision:
+no real-agent capture/input, production route, network configuration, real
+credentials, persistent service, or global hook change is authorized here. The assistant must not use this feature to bypass
 earlier denials of input to real agents.
+
+Hardening: stale dashboard run links require an explicit new pane selection;
+IME composition edits never send control keys before committed text. Both are
+covered by browser regression checks against the isolated terminal fixture.

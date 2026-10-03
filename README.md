@@ -232,7 +232,7 @@ sample isolation, loopback binding, Host validation, and read-only HTTP.
   strict Host validation and no CORS. Local processes can read local observations.
 - No commands are sent to existing tmux panes, and no approval decisions are made.
 
-### Optional pane console (draft)
+### Optional pane console
 
 The separately authenticated, loopback-only [pane console](docs/pane-console.md)
 controls an explicitly selected existing tmux pane after separate activation
