@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Zudo · Agent dashboard</title><link rel="stylesheet" href="/style.css"><script src="/app.js" defer></script></head>
+<body>
+<aside class="rail"><a class="brand" href="/" aria-label="Zudo dashboard">z<span>·</span></a><span class="rail-label">OBSERVATORY</span><span class="rail-foot">v0.1</span></aside>
+<main>
+<header><div><p class="eyebrow">ZUDO / AGENT OBSERVATORY</p><h1>Your work, in view<span>.</span></h1><p class="subtitle">Projects, runs, and the signals between them.</p></div><div class="mode"><span id="mode">CONNECTING</span><small>Read-only · local first</small></div></header>
+<div id="notice" role="status" class="notice">Connecting to local observations…</div>
+<section class="metrics" aria-label="Overview"><div><span>PROJECTS</span><strong id="project-count">—</strong></div><div><span>OBSERVED RUNS</span><strong id="run-count">—</strong></div><div><span>NEEDS ATTENTION</span><strong id="attention-count">—</strong></div><div><span>STALE SIGNALS</span><strong id="stale-count">—</strong></div></section>
+<section class="workspace"><div class="projects"><div class="section-head"><div><p class="eyebrow">WORKSPACE</p><h2>Project activity</h2></div><button id="refresh" type="button">↻ Refresh</button></div><div class="filters"><label class="search">Search projects<input id="search" type="search" placeholder="Find a project or repository…"></label><label class="state-filter">Run state<select id="filter"><option value="all">All states</option><option value="working">Working</option><option value="needs-attention">Needs attention</option><option value="idle">Idle</option><option value="stale">Stale</option><option value="unknown">Unknown</option></select></label></div><div id="projects" aria-live="polite"></div></div>
+<aside class="context"><p class="eyebrow">OBSERVATION HEALTH</p><h2>Connections</h2><div id="connections"></div><div class="cloud"><span class="dot muted"></span><strong>Cloud tasks</strong><p>Validated imports only</p><small>No live cloud connection. Imported states are dated observations.</small></div><div class="reading"><h3>Reading the signals</h3><p>A stopped turn is idle, not a finished project.</p><p>Presence means the process was seen. It does not prove the agent is working.</p><p>Old or disconnected signals remain visible, with their uncertainty intact.</p></div></aside></section>
+<footer><span>No terminal capture. No agent controls.</span><span id="updated">Waiting for observations</span></footer>
+</main></body></html>

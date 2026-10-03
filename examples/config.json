@@ -1,0 +1,11 @@
+{
+  "machine": "my-laptop",
+  "stale_after": 120,
+  "projects": [
+    {
+      "id": "my-project",
+      "repository": "github.com/example/my-project",
+      "roots": ["/absolute/path/to/my-project"]
+    }
+  ]
+}

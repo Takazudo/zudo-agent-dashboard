@@ -1,0 +1,11 @@
+{
+  "name": "zudo-agent-dashboard-qa",
+  "private": true,
+  "scripts": {
+    "check": "node --check zudo_agent/web/app.js",
+    "test:browser": "node scripts/browser-check.cjs"
+  },
+  "devDependencies": {
+    "playwright-core": "1.59.1"
+  }
+}
