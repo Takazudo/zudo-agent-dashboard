@@ -20,7 +20,7 @@ class SetupFixtures(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="zudo setup fixture ")
         self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()
         self.project = self.root / "project with spaces"
         (self.project / ".git").mkdir(parents=True)
         self.config = self.root / "private config.json"
@@ -380,9 +380,12 @@ class DetectionFixtures(unittest.TestCase):
             self.assertFalse(setup.version("/nonexistent/zudo-fixture", "--version", "codex")["supported"])
 
     def test_native_mac_and_wsl_detection(self):
-        with patch("zudo_agent.setup.version", return_value={}), patch("platform.system", return_value="Darwin"):
+        with patch("zudo_agent.setup.version", return_value={}), patch("platform.system", return_value="Windows"):
             self.assertFalse(setup.doctor()["supported"])
             self.assertEqual(setup.doctor()["collector"], "unsupported-native-process-collector")
+        with patch("zudo_agent.setup.version", return_value={}), patch("platform.system", return_value="Darwin"), patch("zudo_agent.native.library", return_value=object()):
+            self.assertTrue(setup.doctor()["supported"])
+            self.assertEqual(setup.doctor()["collector"], "darwin-libproc")
         with patch("zudo_agent.setup.version", return_value={}), patch("platform.system", return_value="Linux"), patch("platform.release", return_value="6.6-microsoft-standard-WSL2"):
             self.assertTrue(setup.doctor()["wsl"])
 

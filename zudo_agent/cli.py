@@ -2,6 +2,7 @@ import argparse
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 from .collector import discover, hook_event
@@ -24,9 +25,21 @@ def main():
     server = commands.add_parser("serve", help="Foreground loopback-only collector and UI")
     server.add_argument("--port", type=int, default=8765)
     server.add_argument("--sample", action="store_true", help="Use only synthetic data; disable collector and database")
+    forward = commands.add_parser("forward", help="Foreground collector and authenticated hub forwarding")
+    forward.add_argument("--once", action="store_true")
+    hub = commands.add_parser("hub", help="Authenticated read-only multi-device dashboard; no local collection")
+    hub.add_argument("--registry", required=True)
+    hub.add_argument("--bind", default="127.0.0.1")
+    hub.add_argument("--port", type=int, default=8765)
+    hub.add_argument("--tls-cert")
+    hub.add_argument("--tls-key")
     args = parser.parse_args()
     store = None
     try:
+        if args.command == "hub":
+            from .hub import load_registry, serve_hub
+            serve_hub(load_registry(args.registry), args.db, args.bind, args.port, args.tls_cert, args.tls_key)
+            return
         if args.command == "serve" and args.sample:
             serve(None, None, args.port, sample=True)
             return
@@ -44,6 +57,18 @@ def main():
                 store.ingest(event)
             return
         store = Store(args.db, config)
+        if args.command == "forward":
+            from .transport import Forwarder
+            forwarder = Forwarder(store, config)
+            try:
+                while True:
+                    discover(config, store)
+                    print(json.dumps(forwarder.cycle()), flush=True)
+                    if args.once:
+                        return
+                    time.sleep(5)
+            except KeyboardInterrupt:
+                return
         if args.command == "collect":
             result = discover(config, store)
         elif args.command == "snapshot":

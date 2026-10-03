@@ -60,8 +60,12 @@ def serve(config, db_path, port, sample=False):
     def collect():
         store = Store(db_path, config)
         try:
+            from .transport import Forwarder
+            forwarder = Forwarder(store, config) if "transport" in config else None
             while not stop.is_set():
                 discover(config, store)
+                if forwarder:
+                    forwarder.cycle()
                 stop.wait(5)
         finally:
             store.close()

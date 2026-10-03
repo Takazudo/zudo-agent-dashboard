@@ -25,7 +25,7 @@ class Fixtures(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        self.root = Path(self.tmp.name)
+        self.root = Path(self.tmp.name).resolve()
         self.config = dict(machine="test-machine", tmux_socket=None, stale_after=120,
                            projects={"example": dict(id="example", repository="github.com/example/project", roots=[str(self.root)])})
         self.db = self.root / "state.sqlite3"

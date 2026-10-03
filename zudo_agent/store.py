@@ -20,8 +20,11 @@ class Store:
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         if not path.exists():
-            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-            os.close(fd)
+            try:
+                fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+                os.close(fd)
+            except FileExistsError:
+                pass  # Another local hook/collector initialized the same DB.
         self.db = sqlite3.connect(path, timeout=2)
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.executescript("""
@@ -112,7 +115,13 @@ class Store:
                 recent_events=[dict(kind=e[1], source=e[0], at=e[2]) for e in observations[-8:]]))
         for p in projects.values():
             p["runs"].sort(key=lambda r: r["last_seen"], reverse=True)
-        return dict(schema_version=1, mode="live", generated_at=now,
+        transport = None
+        if "transport" in self.config and self.db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='outbox'").fetchone():
+            key = digest(self.config["machine"], self.config["transport"]["hub_url"], self.config["transport"]["stream"])
+            row = self.db.execute("SELECT status,acknowledged,pending IS NOT NULL FROM outbox WHERE key=?", (key,)).fetchone()
+            if row:
+                transport = dict(status=row[0], acknowledged_at=row[1], pending=bool(row[2]))
+        return dict(schema_version=1, mode="live", generated_at=now, transport=transport,
                     cloud=dict(status="import-only", live_connected=False), collectors=collectors,
                     projects=list(projects.values()))
 

@@ -30,7 +30,7 @@ below avoids needing any package installation at all.
 
 ## Supported environment
 
-Run setup in Linux or Ubuntu WSL with Python 3.11+ and tmux 3.4–3.x. Doctor
+Run setup in Linux, Ubuntu WSL or macOS with Python 3.11+ and tmux 3.4–3.x. Doctor
 reports the OS, WSL flag, runtime versions and whether they pass compatibility
 checks. Set `--claude-bin`, `--codex-bin`, or `--tmux-bin` to an explicit binary
 when it is not on PATH. Only `--version` / `tmux -V` are invoked; setup does not
@@ -42,14 +42,17 @@ implementation. These are tested setup ranges, **not** claims that earlier
 versions lack hooks. Unknown output, prereleases, missing tools and other
 version ranges stop setup for review rather than silently assuming compatibility.
 
-Native macOS lacks the Linux `/proc` collector. Doctor reports that limitation
-and setup refuses installation there; use the Linux/WSL machine running your
-tmux agents. Native Windows setup is likewise unsupported. This does not install
-WSL, tmux, Python, agents, services, credentials or firewall rules.
+Native macOS uses libproc metadata instead of Linux `/proc`; its native smoke
+test runs in macOS CI. Native Windows remains unsupported; use WSL. This does
+not install WSL, tmux, Python, agents, services, credentials or firewall rules.
 
-Each configured machine collects locally. There is no authenticated multi-host
-aggregation, and cloud tasks remain validated-import-only. Installing a hook
-does not establish a cloud connection or remote-machine monitoring.
+Each machine collects locally. For shared monitoring, follow the
+[multi-device guide](multiple-devices.md): explicit hub registration and optional
+`--hub-url`, `--stream`, `--token-file`, `--ca-file` references are previewed before
+apply. Token provisioning, TLS/private transport and real-device pairing require
+separate approval. Preview never reads a token or contacts another device.
+`hub-plan` previews a user-authored registration candidate, with owned rollback.
+Cloud tasks remain import-only. Installing a hook alone establishes no connection.
 
 ## Preview first
 
@@ -188,6 +191,9 @@ files are retained with conflicts reported for manual review. Rollback does not
 delete observation history, skills in the source clone, receipts or directories.
 An already absent owned addition is a no-op. Never restore a whole backup over
 later user edits.
+If setup changed transport and the shared configuration was edited later,
+rollback retains that config for review rather than disconnecting subsequently
+configured projects. A later-edited hub registry is likewise retained in full.
 If an edited hook must be retained, rollback also keeps its dashboard config
 until that conflict is resolved, so it does not knowingly leave a retained
 handler referencing a removed configuration.

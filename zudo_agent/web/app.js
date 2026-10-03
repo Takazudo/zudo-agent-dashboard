@@ -18,13 +18,17 @@ function isStale(run) { return failed || run.freshness === "stale" || run.state_
 function render() {
   if (!snapshot) return;
   const sample = snapshot.mode === "sample";
-  $("mode").textContent = sample ? "SAMPLE DATA" : "LOCAL OBSERVATIONS";
+  const hub = snapshot.mode === "hub";
+  $("mode").textContent = sample ? "SAMPLE DATA" : hub ? "SHARED OBSERVATIONS" : "LOCAL OBSERVATIONS";
   $("notice").className = `notice ${failed ? "warning" : sample ? "sample" : ""}`;
-  $("notice").textContent = failed ? "Dashboard connection lost. Showing the last snapshot; every signal below may be stale." : sample ? "SAMPLE WORKSPACE — Synthetic projects and runs. No live telemetry is being collected." : "Local observation only. Project completion remains unknown; agent questions without a lifecycle signal remain unknown.";
+  $("notice").textContent = failed ? "Dashboard connection lost. Showing the last snapshot; every signal below may be stale." : sample ? "SAMPLE WORKSPACE — Synthetic projects and runs. No live telemetry is being collected." : hub ? "Registered devices only. Transport health and agent activity are separate; project completion remains unknown." : "Local observation only. Project completion remains unknown; agent questions without a lifecycle signal remain unknown.";
+  if (!failed && snapshot.transport) $("notice").textContent += ` Hub forwarding: ${snapshot.transport.status}${snapshot.transport.pending ? " · retry pending" : ""}.`;
+  document.querySelector('.cloud p').textContent = hub ? 'Local imports only' : 'Validated imports only';
+  document.querySelector('.cloud small').textContent = hub ? 'Cloud imports stay on source devices. No live cloud connection.' : 'No live cloud connection. Imported states are dated observations.';
   const runs = snapshot.projects.flatMap((p) => p.runs);
   $("project-count").textContent = snapshot.projects.length;
   $("run-count").textContent = runs.length;
-  $("attention-count").textContent = runs.filter((r) => r.state === "needs-attention" && !isStale(r) && !["absent", "disconnected"].includes(r.reachability)).length;
+  $("attention-count").textContent = runs.filter((r) => r.state === "needs-attention" && !isStale(r) && !["absent", "disconnected", "offline"].includes(r.reachability)).length;
   $("stale-count").textContent = runs.filter(isStale).length;
   const query = $("search").value.toLowerCase();
   const filter = $("filter").value;
@@ -53,6 +57,7 @@ function render() {
       const detail = el("div", undefined, "run-detail");
       detail.append(el("p", `Evidence: ${run.evidence}. Last presence/observation ${age(run.last_seen)}; lifecycle state ${age(run.state_at)}. Project completion: unknown.`));
       const events = el("ol");
+      if (hub) detail.append(el("p", "Compact forwarded snapshot; event history stays on the source device."));
       for (const event of run.recent_events.slice().reverse()) events.append(el("li", `${event.kind} · ${event.source} · ${age(event.at)}`));
       detail.append(events); row.append(detail); card.append(row);
     }
@@ -62,7 +67,9 @@ function render() {
   const connections = $("connections"); connections.replaceChildren();
   for (const c of snapshot.collectors) {
     const node = el("div", undefined, "connection");
-    node.append(el("span", undefined, `dot ${c.status === "connected" && !failed ? "" : "muted"}`), el("strong", c.machine), el("p", failed ? "Snapshot unavailable" : c.status), el("small", `${c.panes} panes · ${c.unmatched_panes} unassigned / no agent`));
+    node.append(el("span", undefined, `dot ${["connected", "online"].includes(c.status) && !failed ? "" : "muted"}`), el("strong", c.machine), el("p", failed ? "Snapshot unavailable" : `${c.status}${c.collector_status ? " · collector " + c.collector_status : ""}`), el("small", `${c.panes} panes · ${c.unmatched_panes} unassigned / no agent`));
+    if (hub) node.append(el("small", c.checked_at === null ? "No snapshot received" : `Last received ${age(c.checked_at)}`));
+    if (c.omitted_runs) node.append(el("small", `${c.omitted_runs} older runs omitted by snapshot limit`));
     connections.append(node);
   }
   if (!snapshot.collectors.length) connections.append(el("p", "No collector observation yet.", "empty"));
