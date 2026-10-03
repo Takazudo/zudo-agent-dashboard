@@ -282,8 +282,21 @@ class RealTmuxFixtures(unittest.TestCase):
                 backend.connect(replacement)
                 self.addCleanup(backend.disconnect, replacement)
                 tmux("kill-server")
-                tmux("new-session", "-d", "-c", str(root), "sh")
+                replacement["_channel"].process.wait(timeout=5)
+                # kill-server can reply before its listening socket is gone.
+                # Retry only disposable fixture STARTUP, never terminal input.
+                deadline = time.monotonic() + 5
+                while True:
+                    try:
+                        tmux("new-session", "-d", "-c", str(root), "sh")
+                        break
+                    except subprocess.CalledProcessError:
+                        if time.monotonic() >= deadline: raise
+                        time.sleep(.05)
+                restarted = backend.targets()[0]
+                self.assertNotEqual(restarted["server"], replacement["server"])
+                self.assertEqual(restarted["pane"], replacement["pane"])
                 with self.assertRaises((ConsoleError, OSError)): backend.send(replacement, "MUST-NOT-ARRIVE\r")
-                self.assertNotIn("MUST-NOT-ARRIVE", backend.screen(backend.targets()[0])["screen"])
+                self.assertNotIn("MUST-NOT-ARRIVE", backend.screen(restarted)["screen"])
             finally:
                 subprocess.run(command + ["kill-server"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
