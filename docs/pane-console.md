@@ -100,7 +100,8 @@ Approval to implement this feature is not live activation approval.
    bytes) through their existing secret-management process. Do not reuse public
    fixture passwords or hub/device credentials. SHA-256 is used as a verifier
    for this secret, not as password stretching for a memorable password.
-2. The human writes an owner-only regular file, mode `0600`, outside the repo,
+2. Use the [hidden-input policy command](../README.md#set-a-console-password-locally-does-not-activate-the-console)
+   locally to create an owner-only regular file, mode `0600`, outside the repo,
    containing exactly `identity`, `password_sha256` (64 lowercase hex digits),
    `projects` (explicit configured IDs), and `allow_input`. Set `allow_input:
    false` for viewing only; set it to `true` **only after separate approval of

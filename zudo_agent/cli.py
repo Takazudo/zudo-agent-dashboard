@@ -40,6 +40,15 @@ def main():
     proxy.add_argument("--backend-port", type=int, default=46207)
     proxy.add_argument("--port", type=int, default=46208)
     proxy.add_argument("--trust-local-tailscale-serve", action="store_true", help="Acknowledge direct trusted localhost Serve boundary; see docs/tailscale-console-proxy.md")
+    policy = commands.add_parser("console-policy", help="Human-only hidden-input console policy setup; never starts console")
+    actions = policy.add_subparsers(dest="policy_action", required=True)
+    create = actions.add_parser("create", help="Create a new read-only policy without overwriting")
+    create.add_argument("--path", required=True)
+    create.add_argument("--identity", required=True)
+    create.add_argument("--project", action="append", required=True)
+    change = actions.add_parser("password", help="Change only an existing policy's password")
+    change.add_argument("--path", required=True)
+    actions.add_parser("projects", help="List exact configured project IDs without reading credentials")
     args = parser.parse_args()
     store = None
     try:
@@ -58,6 +67,19 @@ def main():
             serve(None, None, args.port, sample=True)
             return
         config = load_config(args.config)
+        if args.command == "console-policy":
+            from .console_policy import configure, PolicySetupError
+            if args.policy_action == "projects":
+                print("\n".join(config["projects"]))
+            else:
+                try:
+                    configure(args.path, config, create=args.policy_action == "create",
+                              identity=getattr(args, "identity", None), projects=getattr(args, "project", None))
+                except PolicySetupError as exc:
+                    print(str(exc), file=sys.stderr)
+                    raise SystemExit(1) from None
+                print("Console policy saved. No console started; existing servers require restart.")
+            return
         if args.command == "serve":
             from .console import load_policy
             policy = load_policy(args.console_policy, config) if args.console_policy else None
