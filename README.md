@@ -90,6 +90,11 @@ only process name is `node` need hooks and otherwise remain unknown.
 
 ## Opt-in lifecycle hooks
 
+For guided setup with preview, explicit approval, safe merging and owned rollback,
+use the bundled [Claude Code / Codex setup skills](docs/setup.md). Their shared
+`scripts/setup.py` can run directly from this clone, even outside the monitored
+project. Nothing is installed simply by invoking the skill or generating a plan.
+
 No hooks are installed by this repository. First install the CLI into a local
 virtual environment so hooks can invoke it from any working directory:
 

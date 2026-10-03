@@ -11,6 +11,7 @@ dependencies = []
 
 [project.scripts]
 zudo-agent = "zudo_agent.cli:main"
+zudo-agent-setup = "zudo_agent.setup:main"
 
 [tool.setuptools.package-data]
 zudo_agent = ["web/*"]

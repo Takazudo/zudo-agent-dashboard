@@ -10,3 +10,5 @@ config.local.json
 .env
 node_modules/
 test-results/
+*.setup-plan.json
+*.receipt.json
