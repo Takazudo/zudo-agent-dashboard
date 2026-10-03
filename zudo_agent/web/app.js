@@ -2,6 +2,7 @@
 let snapshot = null;
 let failed = false;
 let pending = false;
+let consoleEnabled = false;
 const $ = (id) => document.getElementById(id);
 const labels = {working: "Working", "needs-attention": "Needs attention", idle: "Turn stopped", unknown: "Unknown", "error-observed": "Error observed", ended: "Session ended", completed: "Task completed"};
 function el(tag, text, className) {
@@ -69,6 +70,11 @@ function render() {
       const events = el("ol");
       if (hub) detail.append(el("p", "Compact forwarded snapshot; event history stays on the source device."));
       for (const event of run.recent_events.slice().reverse()) events.append(el("li", `${event.kind} · ${event.source} · ${age(event.at)}`));
+      if (consoleEnabled && !sample && !hub && !isPrevious(run) && !isStale(run) && run.reachability === "present" && run.source !== "cloud-import") {
+        const link = el("a", "Open pane console", "pane-link");
+        link.href = `/console.html#${new URLSearchParams({project: project.id, run: run.id})}`;
+        detail.append(link);
+      }
       detail.append(events); row.append(detail); (isPrevious(run) ? history : card).append(row);
     }
     if (previous.length) card.append(history);
@@ -111,3 +117,8 @@ $("filter").addEventListener("change", render);
 $("refresh").addEventListener("click", refresh);
 refresh();
 setInterval(refresh, 5000);
+
+fetch("/api/console/status", {cache: "no-store", signal: AbortSignal.timeout(4000)})
+  .then(response => response.ok ? response.json() : null)
+  .then(info => { consoleEnabled = info?.enabled === true; if (consoleEnabled) { document.querySelector("footer span").textContent = "Optional local pane console · explicit control policy"; render(); } })
+  .catch(() => {});

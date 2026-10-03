@@ -1,8 +1,10 @@
 # Zudo Agent Dashboard
 
 A read-only, local-first view of agent work across projects and individual runs.
-Python 3.11+ on Linux/WSL or macOS, SQLite, and a dependency-free browser UI. No agent
-control API, transcript scraping, terminal capture, or public hosting.
+Python 3.11+ on Linux/WSL or macOS, SQLite, and a dependency-free browser UI.
+The default mode has no terminal capture or control. An optional, separately
+authorized [local pane console](docs/pane-console.md) provides human terminal
+control. No transcript scraping or public hosting is included.
 
 **v0.2:** local tmux discovery and opt-in Claude Code / Codex hooks, plus an
 authenticated private hub for multiple devices; cloud tasks through validated imports only. This is an observation
@@ -229,3 +231,13 @@ sample isolation, loopback binding, Host validation, and read-only HTTP.
   a separate viewer credential; ingestion requires device credentials. Both use
   strict Host validation and no CORS. Local processes can read local observations.
 - No commands are sent to existing tmux panes, and no approval decisions are made.
+
+### Optional pane console
+
+The separately authenticated, loopback-only [pane console](docs/pane-console.md)
+controls an explicitly selected existing tmux pane after separate activation
+approval and explicit human enablement. It supports text/keyboard input and
+resize with live plain-text screen snapshots. Input can execute shell commands,
+including after an agent exits to its shell. It is off by default, and each
+connection starts read-only. Terminal text is never forwarded or stored in
+observation history. The multi-device hub remains observation-only.
