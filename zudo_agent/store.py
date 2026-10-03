@@ -26,8 +26,9 @@ class Store:
             except FileExistsError:
                 pass  # Another local hook/collector initialized the same DB.
         self.db = sqlite3.connect(path, timeout=2)
-        self.db.execute("PRAGMA journal_mode=WAL")
-        self.db.executescript("""
+        try:
+            self.db.execute("PRAGMA journal_mode=WAL")
+            self.db.executescript("""
           CREATE TABLE IF NOT EXISTS events (
             id TEXT PRIMARY KEY, project TEXT, run TEXT, machine TEXT,
             source TEXT, kind TEXT, at REAL);
@@ -37,7 +38,10 @@ class Store:
           CREATE TABLE IF NOT EXISTS collectors (
             machine TEXT PRIMARY KEY, checked REAL, connected INTEGER, panes INTEGER,
             unmatched INTEGER);
-        """)
+            """)
+        except sqlite3.Error:
+            self.db.close()
+            raise
 
     def close(self):
         self.db.close()
