@@ -29,6 +29,7 @@ with tempfile.TemporaryDirectory(prefix="zudo-browser-fixture-") as directory:
     script = Path(directory) / "synthetic.py"
     script.write_text("import ctypes\n" + "ctypes.CDLL(None).prctl(15,b'codex',0,0,0)\nprint('SYNTHETIC SCREEN ONLY 日本語 <img src=x onerror=alert(1)>',flush=True)\ninput()\n")
     server = None
+    auxiliary = []
     try:
         for name in ("first", "second"):
             pane = subprocess.check_output(command + ["new-session", "-d", "-s", name, "-c", directory, "-P", "-F", "#{pane_id}", "sh"], text=True).strip()
@@ -45,10 +46,19 @@ with tempfile.TemporaryDirectory(prefix="zudo-browser-fixture-") as directory:
         discover(config, store)
         store.close()
         server = make_server(config, db, 0, console_policy=policy)
-        print(f"http://127.0.0.1:{server.server_port}", flush=True)
+        origin = f"http://127.0.0.1:{server.server_port}"
+        if "--proxy" in sys.argv:
+            import runpy
+            start = runpy.run_path(str(Path(__file__).with_name("console-proxy-browser-fixture.py")))["start"]
+            front, adapter, origin = start(server, directory)
+            auxiliary = [adapter, server]
+            server = front
+        print(origin, flush=True)
         server.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
         if server: server.server_close()
+        for item in auxiliary:
+            item.shutdown(); item.server_close()
         subprocess.run(command + ["kill-server"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)

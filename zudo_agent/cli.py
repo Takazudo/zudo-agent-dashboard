@@ -34,9 +34,20 @@ def main():
     hub.add_argument("--port", type=int, default=8765)
     hub.add_argument("--tls-cert")
     hub.add_argument("--tls-key")
+    proxy = commands.add_parser("console-proxy", help="Optional loopback adapter for a separately approved Tailscale Serve console route")
+    proxy.add_argument("--external-origin", required=True)
+    proxy.add_argument("--allowed-login", required=True)
+    proxy.add_argument("--backend-port", type=int, default=46207)
+    proxy.add_argument("--port", type=int, default=46208)
+    proxy.add_argument("--trust-local-tailscale-serve", action="store_true", help="Acknowledge direct trusted localhost Serve boundary; see docs/tailscale-console-proxy.md")
     args = parser.parse_args()
     store = None
     try:
+        if args.command == "console-proxy":
+            from .console_proxy import serve_proxy
+            serve_proxy(args.external_origin, args.allowed_login, args.backend_port, args.port,
+                        trust_local_serve=args.trust_local_tailscale_serve)
+            return
         if args.command == "hub":
             from .hub import load_registry, serve_hub
             serve_hub(load_registry(args.registry), args.db, args.bind, args.port, args.tls_cert, args.tls_key)

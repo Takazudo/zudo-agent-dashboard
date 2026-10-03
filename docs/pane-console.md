@@ -118,10 +118,11 @@ Approval to implement this feature is not live activation approval.
 5. Revoke access by stopping the foreground process and restarting without
    `--console-policy`. Restart invalidates leases, their clients, and CSRF proof.
 
-Do not expose these endpoints through the existing x0x route. No TLS/proxy,
-tailnet audience, DNS, network/ACL/firewall, persistent service, global hook,
-or multi-device terminal transport change is included. Mobile layout is tested,
-but accessing it from a separate phone/network remains a separate proposal.
+Do not expose these endpoints through the existing x0x route. The optional
+[Tailscale Serve adapter proposal](tailscale-console-proxy.md) uses a separate
+HTTPS port and preserves the read-only route. Its activation remains a separate
+approval; no live tailnet, DNS, network/ACL/firewall, persistent service, global
+hook, or multi-device terminal transport change is included.
 The assistant must never use this feature to operate real user agents or evade
 an earlier denial of assistant input.
 

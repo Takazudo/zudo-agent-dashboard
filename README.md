@@ -241,3 +241,8 @@ resize with live plain-text screen snapshots. Input can execute shell commands,
 including after an agent exits to its shell. It is off by default, and each
 connection starts read-only. Terminal text is never forwarded or stored in
 observation history. The multi-device hub remains observation-only.
+
+For a separately approved phone/desktop route, see the optional
+[Tailscale console proxy adapter](docs/tailscale-console-proxy.md). It preserves
+console Basic/CSRF checks and leaves the existing read-only route unchanged;
+installing it does not activate access or control.

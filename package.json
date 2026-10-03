@@ -3,7 +3,7 @@
   "private": true,
   "scripts": {
     "check": "node --check zudo_agent/web/app.js && node --check zudo_agent/web/console.js",
-    "test:browser": "node scripts/browser-check.cjs && node scripts/console-browser-check.cjs"
+    "test:browser": "node scripts/browser-check.cjs && node scripts/console-browser-check.cjs && ZUDO_BROWSER_PROXY=1 node scripts/console-browser-check.cjs"
   },
   "devDependencies": {
     "playwright-core": "1.59.1"

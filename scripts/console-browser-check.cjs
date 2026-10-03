@@ -4,16 +4,16 @@ const { spawn } = require('node:child_process');
 const { mkdirSync } = require('node:fs');
 const assert = require('node:assert/strict');
 (async () => {
-  const server = spawn('python3', ['scripts/console-browser-fixture.py'], {stdio: ['ignore', 'pipe', 'inherit']});
+  const server = spawn('python3', ['scripts/console-browser-fixture.py', ...(process.env.ZUDO_BROWSER_PROXY ? ['--proxy'] : [])], {stdio: ['ignore', 'pipe', 'inherit']});
   let browser;
   try {
     const base = await new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(Error('Fixture startup timed out')), 10000);
-      server.stdout.on('data', bytes => { const match = bytes.toString().match(/http:\/\/127\.0\.0\.1:\d+/); if (match) { clearTimeout(timer); resolve(match[0]); } });
+      server.stdout.on('data', bytes => { const match = bytes.toString().match(/https?:\/\/127\.0\.0\.1:\d+/); if (match) { clearTimeout(timer); resolve(match[0]); } });
       server.on('exit', () => { clearTimeout(timer); reject(Error('Fixture exited')); });
     });
     browser = await chromium.launch({headless: true, ...(process.env.CHROMIUM_PATH ? {executablePath: process.env.CHROMIUM_PATH} : {})});
-    const context = await browser.newContext({httpCredentials: {username: 'fixture', password: 'public-fixture-password'}, viewport: {width: 1440, height: 1080}});
+    const context = await browser.newContext({ignoreHTTPSErrors: Boolean(process.env.ZUDO_BROWSER_PROXY), httpCredentials: {username: 'fixture', password: 'public-fixture-password'}, viewport: {width: 1440, height: 1080}});
     const page = await context.newPage();
     const errors = [], writes = [];
     page.on('pageerror', e => errors.push(e.message));
@@ -71,10 +71,10 @@ const assert = require('node:assert/strict');
     await page.locator('#console-resize').click();
     assert.ok(writes.some(text => text.includes('BROWSER-SHELL-OK')));
     mkdirSync('test-results', {recursive: true});
-    await page.screenshot({path: 'test-results/console-desktop.png', fullPage: true});
+    await page.screenshot({path: `test-results/console${process.env.ZUDO_BROWSER_PROXY ? '-proxy' : ''}-desktop.png`, fullPage: true});
     await page.setViewportSize({width: 390, height: 844});
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
-    await page.screenshot({path: 'test-results/console-mobile.png', fullPage: true});
+    await page.screenshot({path: `test-results/console${process.env.ZUDO_BROWSER_PROXY ? '-proxy' : ''}-mobile.png`, fullPage: true});
     const first = await page.locator('#console-run').inputValue();
     const second = await page.locator('#console-run option').evaluateAll(nodes => nodes.map(n => n.value));
     await page.locator('#console-run').selectOption(second.find(value => value !== first));
@@ -82,8 +82,9 @@ const assert = require('node:assert/strict');
     assert.equal(await page.locator('#console-refresh').isDisabled(), true);
     await page.locator('#console-connect').click();
     await page.waitForFunction(() => document.querySelector('#console-screen').textContent.includes('SYNTHETIC'));
+    // Automatic polling may fail before a manual click can occur. Assert the
+    // disconnect itself instead of racing that poll for an enabled button.
     await page.route('**/api/console/screen', route => route.abort());
-    await page.locator('#console-refresh').click();
     await page.waitForFunction(() => document.querySelector('#console-status').textContent.includes('Disconnected'));
     assert.equal(await page.locator('#console-screen').innerText(), '');
     assert.equal(await page.locator('#console-connect').isEnabled(), true);
