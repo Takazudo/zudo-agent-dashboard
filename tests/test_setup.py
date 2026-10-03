@@ -386,7 +386,7 @@ class DetectionFixtures(unittest.TestCase):
         with patch("zudo_agent.setup.version", return_value={}), patch("platform.system", return_value="Darwin"), patch("zudo_agent.native.library", return_value=object()):
             self.assertTrue(setup.doctor()["supported"])
             self.assertEqual(setup.doctor()["collector"], "darwin-libproc")
-        with patch("zudo_agent.setup.version", return_value={}), patch("platform.system", return_value="Linux"), patch("platform.release", return_value="6.6-microsoft-standard-WSL2"):
+        with patch("zudo_agent.setup.version", return_value={}), patch("platform.system", return_value="Linux"), patch("platform.release", return_value="6.6-microsoft-standard-WSL2"), patch("zudo_agent.setup.Path.exists", return_value=True):
             self.assertTrue(setup.doctor()["wsl"])
 
 
