@@ -16,7 +16,7 @@ const assert = require('node:assert/strict');
       });
       server.on('exit', () => { clearTimeout(timeout); reject(new Error('Server exited')); });
     });
-    browser = await chromium.launch({ headless: true });
+    browser = await chromium.launch({ headless: true, ...(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {}) });
     const page = await browser.newPage({ viewport: { width: 1440, height: 1080 } });
     const errors = [];
     page.on('pageerror', (error) => errors.push(error.message));

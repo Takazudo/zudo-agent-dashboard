@@ -16,6 +16,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
+      - name: Install isolated PTY test dependency
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y tmux
       - run: bash scripts/check.sh
       - run: python -m pip wheel --no-deps --wheel-dir dist .
       - run: python -m pip install --no-deps dist/*.whl

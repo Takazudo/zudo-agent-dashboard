@@ -1,12 +1,11 @@
 """Opt-in human pane console. Never part of observation storage or forwarding.
 
-This is a screen snapshot and deliberate text sender, not a PTY attachment.
-All subprocess arguments are server-derived; user text is encoded as hex keys.
+This is a read-only screen snapshot, not a PTY attachment.
+Input is unavailable until delivery can be bound atomically to a run generation.
 """
 import base64
 import hashlib
 import hmac
-import json
 import os
 import re
 import secrets
@@ -14,7 +13,7 @@ import stat
 import subprocess
 import threading
 import time
-from pathlib import Path
+import unicodedata
 
 from . import collector
 from .hub import exact, strict_json
@@ -27,11 +26,15 @@ class ConsoleError(ValueError):
 
 
 def load_policy(path, config):
-    p = Path(path)
-    info = p.stat()
-    if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077 or info.st_size > 8192:
-        raise ValueError("Console policy must be a private owner-only file")
-    raw = strict_json(p.read_bytes())
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(fd, "rb") as stream:
+        info = os.fstat(stream.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077 or info.st_size > 8192:
+            raise ValueError("Console policy must be a private owner-only file")
+        data = stream.read(8193)
+        if len(data) > 8192:
+            raise ValueError("Console policy exceeded the size limit")
+    raw = strict_json(data)
     exact(raw, {"identity", "password_sha256", "projects", "allow_input"})
     if not isinstance(raw["identity"], str) or not re.fullmatch(r"[a-zA-Z0-9@._+-]{1,128}", raw["identity"]):
         raise ValueError("Invalid console identity")
@@ -41,6 +44,8 @@ def load_policy(path, config):
             any(not isinstance(p, str) or p not in config["projects"] for p in raw["projects"]) or
             type(raw["allow_input"]) is not bool):
         raise ValueError("Explicit project allowlist and input policy required")
+    if raw["allow_input"]:
+        raise ValueError("Input is unavailable: run-generation-safe delivery is not implemented")
     return raw
 
 
@@ -56,7 +61,7 @@ def bounded(args, limit=262144):
             raise ConsoleError(503, "Pane response exceeded the limit")
         if process.wait(timeout=4):
             raise ConsoleError(409, "Pane unavailable; reconnect explicitly")
-        return output.decode("utf-8", errors="replace").strip()
+        return output.decode("utf-8", errors="replace").rstrip("\n")
     finally:
         timer.cancel()
         if process.poll() is None:
@@ -97,27 +102,17 @@ class PaneBackend:
         screen = bounded(self.command + ["capture-pane", "-p", "-t", target["pane"], "-S", "0", "-E", "100"])
         self.validate(target)
         # Plain text only, no ANSI interpretation, clipboard/link escape handlers.
-        return "".join(c for c in screen if c in "\n\t" or (ord(c) >= 32 and ord(c) != 127))
+        return "".join(c for c in screen if c in "\n\t" or not unicodedata.category(c).startswith("C"))
 
     def send(self, target, text, enter):
-        self.validate(target)
-        # The conditional and send execute together in tmux's command queue.
-        # No renderer-supplied target or shell command is interpolated here.
-        pane = target["pane"]
-        keys = " ".join(f"{byte:02x}" for byte in text.encode("utf-8"))
-        commands = f"send-keys -t {pane} -H {keys}"
-        if enter:
-            commands += f" ; send-keys -t {pane} Enter"
-        condition = "#{&&:#{==:#{pid},%s},#{==:#{pane_pid},%s}}" % (target["server"][0], target["root"][0])
-        result = bounded(self.command + ["if-shell", "-F", "-t", pane, condition,
-            commands + " ; display-message -p delivered", "display-message -p stale"])
-        if result != "delivered":
-            raise ConsoleError(409, "Target changed; input was not sent")
-        self.validate(target)
+        # Never dispatch to tmux: metadata checks cannot prevent shell fallback.
+        raise ConsoleError(403, "Input unavailable: safe run-bound delivery is not implemented")
 
 
 class Console:
     def __init__(self, config, policy, backend=None, clock=time.monotonic):
+        if policy["allow_input"] is not False:
+            raise ValueError("Input is unavailable in this build")
         self.policy, self.clock = policy, clock
         self.backend = backend or PaneBackend(config)
         self.machine = config["machine"]
@@ -127,14 +122,14 @@ class Console:
 
     def authorized(self, headers):
         values = headers.get_all("Authorization", [])
-        if len(values) != 1 or not values[0].startswith("Basic "):
+        if len(values) != 1 or len(values[0]) > 1024 or not values[0].startswith("Basic "):
             return False
         try:
             raw = base64.b64decode(values[0][6:], validate=True).decode("utf-8")
             identity, password = raw.split(":", 1)
         except (ValueError, UnicodeError):
             return False
-        return (hmac.compare_digest(identity, self.policy["identity"]) and
+        return (hmac.compare_digest(identity.encode(), self.policy["identity"].encode()) and
                 hmac.compare_digest(hashlib.sha256(password.encode()).hexdigest(), self.policy["password_sha256"]))
 
     def handle(self, action, body):
@@ -142,10 +137,14 @@ class Console:
         if not self.lock.acquire(blocking=False):
             raise ConsoleError(429, "Console busy; input is never automatically retried")
         try:
+            if action == "send":
+                raise ConsoleError(403, "Input unavailable: safe run-bound delivery is not implemented")
             now = self.clock()
             self.leases = {key: lease for key, lease in self.leases.items() if lease["expires"] > now}
             if action == "open":
                 exact(body, {"project", "run", "machine"})
+                if any(not isinstance(v, str) or len(v) > 128 for v in body.values()):
+                    raise ConsoleError(400, "Invalid target")
                 if body["project"] not in self.policy["projects"] or body["machine"] != self.machine:
                     raise ConsoleError(403, "Target is not allowed on this machine")
                 matches = [t for t in self.backend.targets() if all(t[k] == body[k] for k in body)]
@@ -154,34 +153,26 @@ class Console:
                 if len(self.leases) >= 8:
                     raise ConsoleError(429, "Too many open consoles")
                 lease = secrets.token_urlsafe(32)
-                self.leases[lease] = dict(target=matches[0], expires=now + 120, sequence=0)
-                return dict(lease=lease, expires_in=120, allow_input=self.policy["allow_input"], sequence=1)
-            if action not in {"screen", "send", "close"}:
+                self.leases[lease] = dict(target=matches[0], expires=now + 120)
+                return dict(lease=lease, expires_in=120, allow_input=self.policy["allow_input"])
+            if action not in {"screen", "close"}:
                 raise ConsoleError(404, "Unknown console operation")
-            exact(body, {"lease", "sequence", "text", "enter"} if action == "send" else {"lease"})
+            exact(body, {"lease"})
+            if not isinstance(body["lease"], str) or len(body["lease"]) > 128:
+                raise ConsoleError(400, "Invalid lease")
             lease = self.leases.get(body["lease"])
             if lease is None:
                 raise ConsoleError(409, "Console expired; reconnect explicitly")
             if action == "close":
                 self.leases.pop(body["lease"])
                 return dict(closed=True)
-            if action == "screen":
-                return dict(screen=self.backend.screen(lease["target"]), sampled_at=time.time())
-            if not self.policy["allow_input"]:
-                raise ConsoleError(403, "Input is disabled by server policy")
-            if type(body["sequence"]) is not int or body["sequence"] != lease["sequence"] + 1:
-                raise ConsoleError(409, "Duplicate or out-of-order input rejected")
-            text = body["text"]
-            if (not isinstance(text, str) or not text or len(text.encode("utf-8")) > 4096 or
-                    any(ord(c) < 32 or ord(c) == 127 for c in text) or type(body["enter"]) is not bool):
-                raise ConsoleError(400, "Send a single line of at most 4096 UTF-8 bytes")
-            # Consume before dispatch. Lost responses never permit resending this input.
-            lease["sequence"] += 1
             try:
-                self.backend.send(lease["target"], text, body["enter"])
+                screen = self.backend.screen(lease["target"])
+                if lease["expires"] <= self.clock():
+                    raise ConsoleError(409, "Console expired; reconnect explicitly")
+                return dict(screen=screen, sampled_at=time.time())
             except Exception:
                 self.leases.pop(body["lease"], None)
-                raise ConsoleError(409, "Delivery uncertain; input will not be retried. Inspect the pane before reconnecting") from None
-            return dict(delivery="sent-to-pane", sequence=lease["sequence"] + 1)
+                raise
         finally:
             self.lock.release()

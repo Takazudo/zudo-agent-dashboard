@@ -5,7 +5,7 @@ import sqlite3
 import subprocess
 import threading
 import time
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 
 from .collector import discover
@@ -18,7 +18,7 @@ def make_server(config, db_path, port=8765, sample=False, console_policy=None):
     if sample and console_policy is not None:
         raise ValueError("Sample mode cannot enable a real console")
     from .console import Console, ConsoleError
-    from .hub import strict_json
+    from .hub import strict_json, BoundedServer
     console = Console(config, console_policy) if console_policy else None
 
     class Handler(BaseHTTPRequestHandler):
@@ -57,7 +57,10 @@ def make_server(config, db_path, port=8765, sample=False, console_policy=None):
             if not self.host_ok() or self.headers.get("Upgrade"):
                 self.reply(403, dict(error="Invalid host or upgrade"))
                 return
-            if not self.path.startswith("/api/console/") or not self.console_auth():
+            if not self.path.startswith("/api/console/"):
+                self.reply(501 if console is None else 404, dict(error="Unknown operation"))
+                return
+            if not self.console_auth():
                 return
             origin = f"http://{self.headers['Host']}"
             if (self.headers.get_all("Origin", []) != [origin] or
@@ -75,7 +78,7 @@ def make_server(config, db_path, port=8765, sample=False, console_policy=None):
                 self.reply(200, console.handle(self.path.removeprefix("/api/console/"), body))
             except ConsoleError as exc:
                 self.reply(exc.status, dict(error=exc.message))
-            except (ValueError, KeyError, TypeError, UnicodeError):
+            except (ValueError, KeyError, TypeError, UnicodeError, RecursionError):
                 self.reply(400, dict(error="Invalid console request"))
             except (OSError, subprocess.SubprocessError):
                 self.reply(503, dict(error="Console unavailable; reconnect explicitly"))
@@ -129,7 +132,7 @@ def make_server(config, db_path, port=8765, sample=False, console_policy=None):
         def log_message(self, *_args):
             pass
 
-    return ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    return BoundedServer(("127.0.0.1", port), Handler)
 
 
 def collect_loop(config, db_path, stop, interval=5):

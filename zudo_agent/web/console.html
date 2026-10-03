@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Zudo · Pane viewer</title><link rel="stylesheet" href="/style.css"><script src="/console.js" defer></script></head>
+<body class="console-page"><main>
+<header><div><p class="eyebrow">ZUDO / LOCAL PANE VIEWER</p><h1>Selected run<span>.</span></h1><p class="subtitle">Read-only screen snapshots · not an interactive terminal</p></div><a href="/">Back to dashboard</a></header>
+<p class="notice" id="console-status" role="status">Authenticating…</p>
+<p id="operator"></p>
+<section class="project console-controls" aria-label="Select target">
+<label>Project<select id="console-project" disabled></select></label>
+<label>Current run<select id="console-run" disabled></select></label>
+<p id="console-target">No target selected.</p>
+<div class="console-actions"><button id="console-connect" disabled>Connect to selected run</button><button id="console-refresh" disabled>Refresh screen</button><button id="console-close" disabled>Close and clear</button></div>
+<p id="console-expiry">Disconnected. Reconnection is always manual.</p>
+</section>
+<section aria-label="Selected pane screen"><h2>Screen snapshot</h2><p>Up to 101 visible rows. No history, continuous stream, resize, or control keys.</p><pre id="console-screen" tabindex="0" aria-label="Read-only pane screen"></pre></section>
+<section class="project console-controls"><label>Input unavailable<input id="console-input" disabled placeholder="Safe run-bound delivery is not implemented"></label><button id="console-send" disabled>Send unavailable</button><p>Read-only preview. Sending text and interactive terminal controls are unavailable in this build.</p></section>
+<footer>Screen content stays in this page’s memory and is cleared on close, target change, expiry, or disconnect. It is not added to dashboard history.</footer>
+</main></body></html>

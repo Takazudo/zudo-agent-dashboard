@@ -229,3 +229,11 @@ sample isolation, loopback binding, Host validation, and read-only HTTP.
   a separate viewer credential; ingestion requires device credentials. Both use
   strict Host validation and no CORS. Local processes can read local observations.
 - No commands are sent to existing tmux panes, and no approval decisions are made.
+
+### Optional pane viewer (draft)
+
+An independently authenticated, loopback-only [pane viewer](docs/pane-console.md)
+can show an explicitly selected current local run's screen after separate
+activation approval. It is off by default and never forwards terminal content.
+**This is read-only: Send and interactive PTY support are unavailable.** The
+multi-device hub and normal observation mode remain read-only.
