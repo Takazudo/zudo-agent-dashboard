@@ -1,0 +1,7 @@
+include README.md
+include docs/setup.md
+include package.json package-lock.json
+recursive-include scripts *.py *.sh *.cjs
+recursive-include examples *.json
+recursive-include .agents/skills SKILL.md
+recursive-include .claude/skills SKILL.md

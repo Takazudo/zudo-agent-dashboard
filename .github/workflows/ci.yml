@@ -18,6 +18,12 @@ jobs:
           node-version: '24'
       - run: bash scripts/check.sh
       - run: python -m pip wheel --no-deps --wheel-dir dist .
+      - run: python -m pip install --no-deps dist/*.whl
+      - name: Verify installed setup runner outside checkout
+        working-directory: '${{ runner.temp }}'
+        run: |
+          python -m zudo_agent.setup verify-synthetic --provider claude
+          python -m zudo_agent.setup verify-synthetic --provider codex
   browser:
     runs-on: ubuntu-latest
     steps:
