@@ -184,7 +184,9 @@ class HubFixtures(unittest.TestCase):
             finally:
                 conn.close()
         headers = {"Authorization": "Bearer "+TOKEN_A, "Content-Type": "application/json"}
-        self.assertEqual(request("/api/ingest", b"x"*(MAX_BODY+1), headers), 413)
+        # The server rejects oversized Content-Length before reading the body.
+        # Sending a large body races its early close on macOS TCP sockets.
+        self.assertEqual(request("/api/ingest", b"", dict(headers, **{"Content-Length": str(MAX_BODY+1)})), 413)
         self.assertEqual(request("/api/ingest", b'{"machine":"a","machine":"b"}', headers), 409)
         self.assertEqual(request("/api/control", b"{}", headers), 404)
         self.assertEqual(request("/api/ingest", b"{}", dict(headers, Host="evil.example")), 404)
