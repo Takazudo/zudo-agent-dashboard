@@ -201,14 +201,24 @@ function startSample() {
     assert.equal(await boardPage.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'short board avoids horizontal document overflow');
     const origin = await inbox.locator('.session-card .card-origin').first().innerText();
     assert.ok(origin.length > 60, 'long device and project labels remain present');
-    const beforeMoveScroll = await inbox.evaluate(el => { el.scrollTop = 220; return el.scrollTop; });
-    assert.ok(beforeMoveScroll > 0);
-    const move = inbox.locator('[data-move]').first();
+    // Focus a menu deeper in the lane before recording its position: Chromium
+    // may scroll a native select into view as part of the selection gesture.
+    const move = inbox.locator('[data-move]').nth(3);
+    await move.scrollIntoViewIfNeeded();
+    await move.focus();
+    await move.evaluate(el => el.addEventListener('change', () => {
+      window.__scrollAtMove = el.closest('[data-scroll-lane]').scrollTop;
+    }, {capture: true, once: true}));
     const movedId = await move.getAttribute('data-move');
     const moved = boardPage.waitForResponse(response => response.url().endsWith('/api/workflow') && response.request().method() === 'POST');
     await move.selectOption('done');
     assert.equal((await moved).status(), 200);
-    assert.ok(await inbox.evaluate(el => el.scrollTop > 0), 'moving a card retains the source lane position');
+    await boardPage.waitForFunction(id => document.querySelector(`[data-scroll-lane="done"] [data-move="${id}"]`), movedId);
+    const scrollAtMove = await boardPage.evaluate(() => window.__scrollAtMove);
+    const scrollAfterMove = await inbox.evaluate(el => el.scrollTop);
+    assert.ok(scrollAtMove > 0, 'the move begins in a scrolled lane after native focus');
+    assert.ok(Math.abs(scrollAfterMove - scrollAtMove) <= 1,
+      `moving a card retains the source lane position: ${scrollAtMove} -> ${scrollAfterMove}`);
     assert.equal(await boardPage.locator('.lane-cards[data-scroll-lane="done"] [data-move="' + movedId + '"]').inputValue(), 'done');
     const dragCard = inbox.locator('.session-card').first();
     const dragId = await dragCard.getAttribute('data-session-id');
