@@ -38,7 +38,9 @@ window.createComposerEditor=(host,callbacks={})=>{
   selectPane(id){
    if(destroyed||view.composing||typeof id!=='string'||!id||id===paneId)return false;
    if(paneId){states.set(paneId,view.state);scrollPositions.set(paneId,{top:view.scrollDOM.scrollTop,left:view.scrollDOM.scrollLeft})}
-   paneId=id;view.setState(states.get(id)||EditorState.create({doc:'',extensions:extensions()}));
+   const selection=host.ownerDocument.getSelection();
+   if(selection&&(view.dom.contains(selection.anchorNode)||view.dom.contains(selection.focusNode)))selection.removeAllRanges();
+   cancelAnimationFrame(restoreFrame);paneId=id;view.setState(states.get(id)||EditorState.create({doc:'',extensions:extensions()}));
    view.dispatch({effects:editable.reconfigure([EditorState.readOnly.of(!enabled),EditorView.editable.of(enabled)])});configure(prefs,true);
    const at=scrollPositions.get(id)||{top:0,left:0};view.scrollDOM.scrollTop=at.top;view.scrollDOM.scrollLeft=at.left;return true
   },
@@ -49,7 +51,7 @@ window.createComposerEditor=(host,callbacks={})=>{
   vimKey:key=>{if(destroyed)return;const cm=getCM(view);if(cm&&enabled&&prefs.vim){Vim.handleKey(cm,key);status()}},
   state:()=>destroyed?null:({pane:paneId,enabled,vim:prefs.vim,vimMode:!prefs.vim?'text':getCM(view)?.state?.vim?.insertMode?'insert':getCM(view)?.state?.vim?.visualMode?'visual':'normal',doc:view.state.doc.toString(),selection:view.state.selection.toJSON(),undoDepth:undoDepth(view.state),viewCount:host.querySelectorAll('.cm-editor').length}),
   // Call reset on disconnect, expiry, or session change. Only selectPane preserves drafts.
-  reset(){if(destroyed)return;states.clear();scrollPositions.clear();pendingPrefs=null;paneId='';enabled=false;view.setState(EditorState.create({doc:'',extensions:extensions()}));clearVimState();status()},
+  reset(){if(destroyed)return;cancelAnimationFrame(restoreFrame);states.clear();scrollPositions.clear();pendingPrefs=null;paneId='';enabled=false;view.setState(EditorState.create({doc:'',extensions:extensions()}));clearVimState();status()},
   destroy(){if(destroyed)return;destroyed=true;enabled=false;pendingPrefs=null;states.clear();scrollPositions.clear();clearTimeout(statusTimer);cancelAnimationFrame(restoreFrame);window.removeEventListener('dashboard-preferences',onPreferences);view.dom.removeEventListener('keydown',onKeydown);view.destroy();clearVimState();if(window.composerEditor===api)delete window.composerEditor}
  };
  status();window.composerEditor=api;return api;

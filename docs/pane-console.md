@@ -1,67 +1,103 @@
 # Human-operated local pane console
 
-Built on the multi-device observations introduced by PR #2, this is an **optional
-external controller for an existing tmux pane**, including its shell. It does not
-own or start the pane's processes. If an agent exits to a shell in the same pane,
-input continues to that shell as expected. Input may execute shell commands.
+This optional feature shows recent output from, and can provide human input to,
+an existing local tmux pane, including its shell. It does not own or start the
+pane's processes. Input can execute shell commands. The console policy is off
+unless it is explicitly configured. The authenticated multi-device hub remains
+observation-only and has no pane capture or terminal control.
 
-The console is off by default. A private local policy separately permits viewing
-or control. Every connection starts read-only and requires an explicit **Enable
-control** action, even when the policy permits input. Only one lease
-can control a given pane at a time. The authenticated multi-device hub stays
-observation-only. No remote listener, proxy route, or network access is added.
+## Dashboard previews and pane controls
 
-## Operator workflow and delivered capabilities
+The home page shows session cards alongside project and device health. Observed
+remote runs are clearly labeled as observation-only; they have no invented pane
+or capture. A local pane's recent output is hidden until a human selects
+**Authenticate previews** and passes the existing operator Basic-auth check.
+After that explicit choice, the dashboard makes bounded, one-off read requests
+for authorized panes and pauses preview polling while the detail inspector is
+open. Selecting a card, expanding a tree row, filtering, or moving a manual
+workflow lane never sends terminal input. Workflow lanes are dashboard metadata,
+stored separately from observed state and terminal text.
 
-Expand a current local run in the dashboard and select **Open pane console**.
-After operator authentication, select an existing pane from an allowed project.
-The initial run is a selection aid, not the control target. If a linked run is no
-longer present, no replacement pane is selected; choose a pane explicitly. The console can also
-select shell panes without an agent. It shows project, machine, server identity,
-pane ID, full pane identity, and the latest foreground process name and dimensions.
-Connect, inspect the pane, then explicitly enable control if authorized.
+The detail inspector is a same-origin frame. A stale run or pane link does not
+select a replacement target. Select an authorized pane explicitly. **Connect**
+opens a short-lived read-only view of that pane; it does not enable input. The
+selected project, machine, session, pane, foreground process and dimensions are
+shown with the output. Embedded target selection is controlled by the parent
+inspector's pane tabs.
 
-- **Compose text / Send** supports Unicode, multiline text, and optional Enter.
-  Newlines and Enter may execute commands; there is no content inspection.
-- **Type directly** shows the interactive keyboard; typed text sends immediately, including IME composition.
-  IME edits remain local until composition commits; they do not send premature
-  delete or Enter keys. It supports Enter, Tab, Backspace, Delete, Escape, arrows, Home/End, Page Up/Down,
-  and ASCII Ctrl combinations. Mobile buttons provide Enter, Tab, Esc, Ctrl-C,
-  and arrows. Standard ANSI arrow sequences are sent; not every terminal's
-  application-specific key encoding is emulated.
-- The input panel can be hidden and reopened without losing a Compose draft,
-  caret, mode, or chosen height in the same valid connection. Hiding it or changing
-  modes cancels unfinished direct IME input; tap the direct field, paste, type a
-  physical key, or start a fresh composition to enter new input afterward.
-  Drag its divider with a mouse or touch, or focus the divider and use Up/Down
-  (Shift for a larger step), Home or End. Enlarging the panel grows the textarea;
-  smaller viewports temporarily clamp its height to reserve visible output.
-- Background polling leaves input controls and unchanged output alone. A changed
-  snapshot keeps reading position above the bottom. Selecting output holds the
-  displayed snapshot; **Latest** clears that selection and shows the newest one.
-  This keeps at most one pending snapshot, not a scrollback history. Changing
-  targets or disconnecting also clears that pending snapshot and hidden drafts.
-- **Session info** contains full target/operator identity, lease expiry and pane
-  sizing. The foreground and selected project/pane remain visible in the main view.
-- **Pane size** explicitly requests 20–300 columns and 5–200 rows. This changes
-  the shared tmux layout and is visible to other clients; tmux can clamp it.
-- Output is a **plain-text screen snapshot refreshed every 500 ms**, at most 200
-  visible rows. This is real tmux/PTY input with snapshot rendering, not a full
-  streaming terminal emulator. Colors, scrollback, mouse forwarding, function
-  keys, and clipboard/OSC handling are not implemented. Slow operations reduce
-  refresh frequency; the client never overlaps requests or accumulates screens.
+The input panel starts hidden. **Terminal input** opens it and explicitly enables
+the currently named pane, when the private policy allows input. There is no
+separate control checkbox. Closing the panel with **Close input** disables
+browser-side input immediately and requests server-side control revocation. The
+pane's unsent draft stays in memory. The toggle remains disabled until the server
+confirms revocation; if confirmation fails, the lease disconnects. Once the
+panel is reopened in the same connection, input must be deliberately enabled
+again.
 
-Changing selection, closing, expiry, or a detected disconnect clears visible
-text and unsent input. Reconnection is manual and starts read-only. A quiet
-network loss is detected by the next screen request or expiry. The initial
-selection list is refreshed by reloading the page. Closing or expiring a lease
-closes only the dashboard's tmux control client; it does not terminate the pane
-or detach another user's client.
+Switching to another pane in the same tmux session revokes the old lease and
+opens the selected pane read-only. Each pane keeps its own in-memory Compose
+draft, selection and undo state while the detail frame stays in that session.
+Changing sessions, disconnecting, closing the detail frame, reconnecting,
+authentication failure or lease expiry clears per-pane editor state, including
+Vim registers. Reconnect manually and enable input again. No draft is saved to disk,
+browser storage, snapshots or the hub. Home previews and console output also stay
+only in page memory, never in browser storage, snapshots, or the hub. Home cards
+refresh their preview while the inspector is closed and pause preview polling
+while it is open. The selected console frame and pending newer frame clear when
+its target changes or the connection ends.
+
+## Compose, direct input and settings
+
+**Compose** uses the bundled CodeMirror 6 editor and the real Vim extension when
+enabled. It keeps one editor view. Enter and modified Enter edit the draft; only
+the explicit **Send** button submits it. Optional **Append Enter** adds a terminal
+Enter after the draft, which may execute a command. Sent text is not inspected.
+
+**Type directly** sends terminal keys immediately after text composition commits.
+Uncommitted IME text remains local and is discarded if input closes or the pane
+changes before commit. The mode supports Enter, Tab, Backspace, Delete, Escape,
+arrows, Home/End, Page Up/Down and ASCII Ctrl combinations. Buttons provide
+Enter, Tab, Esc, Ctrl-C and arrows; ANSI sequences may differ from a terminal's
+application-specific key encoding. Vim applies only to Compose.
+
+The input divider resizes by mouse, touch or keyboard. **Enlarge editor** expands
+the existing editor in place; it is separate from expanding the whole detail
+inspector. Geometry changes keep the editor, selection, undo history, output
+reading position and input visibility. In the enlarged editor, other controls
+are inert and keyboard focus stays within the composer. Escape respects active
+IME conversion and Vim/editor ownership.
+
+Editor and appearance settings include Vim, wrapping, line numbers, text size,
+and System/Light/Dark theme. Apply commits changes in place; Cancel, X and Escape
+discard uncommitted changes. System follows the operating-system appearance;
+Light and Dark remain fixed. The browser stores only these whitelisted
+preferences. Drafts and captured text are never stored there.
+
+## Recent output and limits
+
+The console displays plain-text tmux snapshots, sampled about every 500 ms while
+connected. Each capture is bounded to at most 500 recent lines and 128 KiB; the
+screen shows its sample time and cap. This is not a full terminal stream and has
+no deep scrollback, ANSI colors, mouse forwarding, function keys or OSC/clipboard
+handling.
+
+Following **Latest** tracks new snapshots. Scrolling up pauses following, and
+selecting screen text holds the displayed frame with at most one pending newer
+frame. If bounded overlap cannot locate the old reading position reliably, the
+console freezes the old frame and says the position is uncertain; **Latest**
+replaces it. It never pretends that a bounded capture is complete history.
+
+**Session info** shows operator identity and lease expiry. Pane resizing requests
+20–300 columns and 5–200 rows; it changes the shared tmux layout and other clients
+may see it. tmux may clamp the size. Closing or expiring a lease closes only the
+dashboard's tmux control client. It does not terminate the pane or detach another
+user's client.
 
 ## Identity, authorization, and delivery
 
 The server binds each lease to machine/boot identity, tmux server PID/start time,
-pane ID, and pane-root PID/start time. Foreground process changes and shell cwd
+tmux session identity and creation time, pane ID, and pane-root PID/start time.
+Foreground process changes and shell cwd
 changes do not revoke that already authorized pane. Project roots constrain
 initial selection, not what an authorized terminal user can do inside its shell.
 They are **not a filesystem sandbox**. Pane respawn/replacement or a server

@@ -32,6 +32,52 @@ class WorkflowFixture(unittest.TestCase):
         self.store = Store(Path(self.tmp.name) / "observations.sqlite", self.config)
         self.addCleanup(self.store.close)
 
+    def test_alias_revisions_and_staged_discovery_preserve_explicit_edit_time(self):
+        from unittest.mock import patch
+        workflow = Workflow()
+        first, second, canonical = (run_id("example", "fixture", x * 64) for x in "abc")
+        with patch("zudo_agent.store.time.time", return_value=10):
+            workflow.move(self.store, first, "review", 0)
+        with patch("zudo_agent.store.time.time", return_value=20):
+            workflow.move(self.store, second, "done", 0)
+        with patch("zudo_agent.store.time.time", return_value=30):
+            self.store.workflow_reconcile(canonical, [first])
+        self.store.workflow_reconcile(canonical, [first, second])
+        current = self.store.workflow_get(canonical)
+        self.assertEqual(current["lane"], "done")
+        self.assertGreater(current["revision"], 1)
+        self.assertEqual(self.store.db.execute("SELECT edited FROM workflow WHERE id=?", (canonical,)).fetchone()[0], 20)
+        updated, conflict = workflow.move(self.store, first, "inbox", 1)
+        self.assertIsNone(updated)
+        self.assertIn("identity changed", conflict["error"])
+        self.assertEqual(self.store.workflow_get(canonical), current)
+        self.store.workflow_reconcile(canonical, [first, second])
+        self.assertEqual(self.store.workflow_get(canonical), current, "repeated discovery must not change revision")
+
+    def test_latest_explicit_edit_survives_wall_clock_regression(self):
+        from unittest.mock import patch
+        first, second, canonical = (run_id("example", "fixture", x * 64) for x in "abc")
+        with patch("zudo_agent.store.time.time", return_value=20):
+            self.store.workflow_move(first, "review", 0)
+        with patch("zudo_agent.store.time.time", return_value=10):
+            self.store.workflow_move(second, "done", 0)
+        self.store.workflow_reconcile(canonical, [first, second])
+        self.assertEqual(self.store.workflow_get(canonical)["lane"], "done")
+
+    def test_alias_created_after_authorization_cannot_redirect_a_write(self):
+        workflow = Workflow()
+        run, canonical = (run_id("example", "fixture", x * 64) for x in "ab")
+        self.assertEqual(self.store.workflow_canonical(run), run)  # HTTP authorization snapshot.
+        other = Store(Path(self.tmp.name) / "observations.sqlite", self.config)
+        try:
+            other.workflow_reconcile(canonical, [run])
+        finally:
+            other.close()
+        updated, conflict = workflow.move(self.store, run, "done", 0)
+        self.assertIsNone(updated)
+        self.assertIn("identity changed", conflict["error"])
+        self.assertEqual(self.store.workflow_get(canonical), {"lane": "inbox", "revision": 0})
+
     def test_revision_conflict_alias_and_separate_observations(self):
         workflow = Workflow()
         key = run_id("example", "fixture", "a" * 64)
@@ -133,6 +179,83 @@ class WorkflowFixture(unittest.TestCase):
                 response.read()
             finally:
                 connection.close()
+
+    def test_console_workflow_requires_basic_and_exact_workflow_csrf(self):
+        run = digest("authenticated-workflow-fixture")
+        canonical = digest("authenticated-session-workflow-fixture")
+        self.store.ingest(dict(project_id="example", run_id=run, machine="fixture", source="codex",
+                               kind="working", observed_at=time.time()))
+        target = dict(project="example", machine="fixture", id="pane-fixture", session_id="session-fixture",
+                      workflow_id=canonical, run=run, pane="%1", server=(123, 1.0),
+                      foreground="sh", cols=80, rows=24)
+        secret = "PUBLIC-CONSOLE-WORKFLOW-FIXTURE-SECRET"
+        password_sha256 = hashlib.sha256(secret.encode()).hexdigest()
+        policy = dict(identity="fixture", password_sha256=password_sha256, projects=["example"], allow_input=False)
+
+        class FakeConsole:
+            def __init__(self, *_args):
+                self.csrf = "console-csrf-fixture"
+                self.policy = policy
+
+            def authorized(self, headers):
+                return headers.get("Authorization") == "Basic " + base64.b64encode(
+                    f"fixture:{secret}".encode()).decode()
+
+            def handle(self, action, _body):
+                if action == "targets":
+                    return {"targets": [target]}
+                raise AssertionError(f"Unexpected console action: {action}")
+
+            def shutdown(self):
+                pass
+
+        with patch("zudo_agent.console.Console", FakeConsole):
+            server = make_server(self.config, Path(self.tmp.name) / "observations.sqlite", port=0,
+                                 console_policy=policy)
+        self.addCleanup(server.server_close)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.shutdown)
+        authority = f"127.0.0.1:{server.server_port}"
+        authorization = "Basic " + base64.b64encode(f"fixture:{secret}".encode()).decode()
+
+        def request(method, path, body=None, headers=None):
+            connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+            try:
+                connection.request(method, path, body, headers or {})
+                response = connection.getresponse()
+                payload = response.read()
+                return response.status, json.loads(payload) if payload else None
+            finally:
+                connection.close()
+
+        self.assertEqual(request("GET", "/api/console/workflow")[0], 401)
+        status, open_data = request("GET", "/api/workflow")
+        self.assertEqual(status, 200)
+        self.assertEqual(open_data["sessions"], [], "unauthenticated workflow reads disclose no session targets")
+        self.assertNotIn(canonical, open_data["items"])
+
+        status, data = request("GET", "/api/console/workflow", headers={"Authorization": authorization})
+        self.assertEqual(status, 200)
+        self.assertEqual(data["sessions"], [dict(id=canonical, session_id="session-fixture",
+            project="example", machine="fixture", panes=["pane-fixture"], runs=[run])])
+        self.assertEqual(data["run_keys"][0]["canonical"], canonical)
+        self.assertEqual(data["items"][canonical], {"lane": "inbox", "revision": 0})
+
+        body = json.dumps(dict(id=canonical, lane="review", revision=0))
+        headers = {"Authorization": authorization, "Origin": f"http://{authority}",
+                   "Content-Type": "application/json", "X-Workflow-CSRF": data["csrf"]}
+        self.assertEqual(request("POST", "/api/console/workflow", body, dict(headers, Authorization="Basic invalid"))[0], 401)
+        self.assertEqual(request("POST", "/api/console/workflow", body, dict(headers, Origin="https://evil.test"))[0], 403)
+        self.assertEqual(request("POST", "/api/console/workflow", body,
+                                 dict(headers, **{"X-Workflow-CSRF": "wrong"}))[0], 403)
+        self.assertEqual(request("POST", "/api/console/workflow", body, headers),
+                         (200, dict(id=canonical, lane="review", revision=1)))
+
+        # The unauthenticated observation route remains available and distinct;
+        # it cannot mutate the canonical authenticated session identifier.
+        self.assertEqual(request("POST", "/api/workflow", body,
+            {"Origin": f"http://{authority}", "Content-Type": "application/json",
+             "X-Workflow-CSRF": data["csrf"]})[0], 409)
 
 
 class ConsolePreviewFixture(unittest.TestCase):

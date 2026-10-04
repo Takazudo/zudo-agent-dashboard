@@ -53,3 +53,14 @@ button.active,.primary,.all-sessions.selected,.view-switch [aria-pressed=true],.
 .tree-row[data-depth="1"]{padding-left:16px}.tree-row[data-depth="2"]{padding-left:28px}.tree-row[data-depth="3"]{padding-left:40px}
 #project-history{flex:0 0 auto;max-height:115px;overflow:auto;margin-bottom:8px;border-top:1px solid var(--border-subtle)}#project-history:empty{display:none}
 @media(max-width:650px){#project-history{max-height:75px}.home-health{display:flex;overflow:auto}.app-header #refresh{font-size:11px;padding:6px}}
+
+/* Short windows scroll the workspace; cards and their lane controls never compress. */
+#workspace{overflow:auto}
+#workspace>.workspace-top,#workspace>.notice,#workspace>.toolbar,#workspace>.view-description,#project-overview{flex-shrink:0}
+.session-surface{flex:1 0 280px;min-height:280px}
+#project-overview{font-size:12px;color:var(--muted);margin:0 0 12px;border-top:1px solid var(--border-subtle);padding-top:8px}
+#project-overview>summary{cursor:pointer;padding:5px 0}
+#project-overview #project-history{max-height:200px;margin:8px 0 0}
+.card-preview:disabled,.card-title:disabled{opacity:1}
+.card-title:disabled{color:var(--text)}
+@media(max-height:600px){#workspace{padding-top:12px}.workspace-top{margin-bottom:12px}.home-health{margin-bottom:10px}.session-surface{flex-basis:280px;min-height:280px}}

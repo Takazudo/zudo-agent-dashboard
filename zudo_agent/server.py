@@ -61,11 +61,11 @@ def make_server(config, db_path, port=8765, sample=False, console_policy=None):
             if not self.host_ok() or self.headers.get("Upgrade"):
                 self.reply(403, dict(error="Invalid host or upgrade"))
                 return
-            is_workflow = self.path == "/api/workflow"
+            is_workflow = self.path in {"/api/workflow", "/api/console/workflow"}
             if not is_workflow and not self.path.startswith("/api/console/"):
                 self.reply(501 if console is None else 404, dict(error="Unknown operation"))
                 return
-            if not is_workflow and not self.console_auth():
+            if self.path.startswith("/api/console/") and not self.console_auth():
                 return
             origin = f"http://{self.headers['Host']}"
             if (self.headers.get_all("Origin", []) != [origin] or
@@ -130,7 +130,9 @@ def make_server(config, db_path, port=8765, sample=False, console_policy=None):
                 if self.console_auth():
                     self.reply(200, dict(csrf=console.csrf, identity=console.policy["identity"], allow_input=console.policy["allow_input"]))
                 return
-            if route == "/api/workflow":
+            if route in {"/api/workflow", "/api/console/workflow"}:
+                if route == "/api/console/workflow" and not self.console_auth():
+                    return
                 store = None
                 try:
                     if not sample:

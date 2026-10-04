@@ -26,20 +26,31 @@ with tempfile.TemporaryDirectory(prefix="zudo-browser-fixture-") as directory:
                   projects={"example": dict(id="example", repository="github.com/example/fixture", roots=[directory])})
     policy = dict(identity="fixture", password_sha256=hashlib.sha256(b"public-fixture-password").hexdigest(), projects=["example"], allow_input=True)
     db = Path(directory) / "fixture.sqlite"
-    script = Path(directory) / "synthetic.py"
-    script.write_text("import ctypes\n" + "ctypes.CDLL(None).prctl(15,b'codex',0,0,0)\nprint('SYNTHETIC SCREEN ONLY 日本語 <img src=x onerror=alert(1)>',flush=True)\ninput()\n")
+    scripts = {}
+    for name in ("shared-a", "shared-b", "separate"):
+        script = Path(directory) / f"{name}.py"
+        script.write_text(
+            "import ctypes\n"
+            "ctypes.CDLL(None).prctl(15,b'codex',0,0,0)\n"
+            f"print('\\n'.join(f'HISTORY-{name}-{{i:04d}}' for i in range(620)), flush=True)\n"
+            "print('SYNTHETIC SCREEN ONLY 日本語 <img src=x onerror=alert(1)>',flush=True)\n"
+            "input()\n"
+        )
+        scripts[name] = script
     server = None
     auxiliary = []
     try:
-        for name in ("first", "second"):
-            pane = subprocess.check_output(command + ["new-session", "-d", "-s", name, "-c", directory, "-P", "-F", "#{pane_id}", "sh"], text=True).strip()
-            subprocess.run(command + ["send-keys", "-t", pane, "-l", sys.executable + " " + str(script)], check=True)
+        first = subprocess.check_output(command + ["new-session", "-d", "-s", "shared", "-c", directory, "-P", "-F", "#{pane_id}", "sh"], text=True).strip()
+        second = subprocess.check_output(command + ["split-window", "-d", "-t", "shared", "-c", directory, "-P", "-F", "#{pane_id}", "sh"], text=True).strip()
+        third = subprocess.check_output(command + ["new-session", "-d", "-s", "separate", "-c", directory, "-P", "-F", "#{pane_id}", "sh"], text=True).strip()
+        for pane, name in ((first, "shared-a"), (second, "shared-b"), (third, "separate")):
+            subprocess.run(command + ["send-keys", "-t", pane, "-l", sys.executable + " " + str(scripts[name])], check=True)
             subprocess.run(command + ["send-keys", "-t", pane, "Enter"], check=True)
         backend = PaneBackend(config)
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline:
             targets = backend.targets()
-            if len(targets) == 2 and all(t["run"] for t in targets): break
+            if len(targets) == 3 and all(t["run"] for t in targets): break
             time.sleep(.05)
         else: raise RuntimeError("Synthetic agents did not start")
         store = Store(db, config)

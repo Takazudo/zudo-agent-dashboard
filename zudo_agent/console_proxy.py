@@ -21,9 +21,9 @@ REQUEST_TIMEOUT = 10
 GET_ROUTES = {"/", "/app.js", "/style.css", "/console.html", "/console.js",
               "/preferences.js", "/tokens.css", "/dashboard.css", "/detail.css",
               "/editor.js", "/THIRD_PARTY_NOTICES.txt", "/favicon.svg", "/api/workflow",
-              "/api/snapshot", "/api/console/status", "/api/console/bootstrap"}
+              "/api/snapshot", "/api/console/status", "/api/console/bootstrap", "/api/console/workflow"}
 POST_ROUTES = {"/api/console/" + action for action in
-               ("targets", "open", "screen", "preview", "close", "control", "send", "resize")} | {"/api/workflow"}
+               ("targets", "open", "screen", "preview", "close", "control", "send", "resize", "workflow")} | {"/api/workflow"}
 
 
 def settings(external_origin, allowed_login, backend_port, trust_local_serve):
@@ -136,7 +136,7 @@ def make_proxy(external_origin, allowed_login, backend_port, port=46208, *, trus
             if auth:
                 outgoing["Authorization"] = auth[0]
             if self.command == "POST":
-                csrf_name = "X-Workflow-CSRF" if self.path == "/api/workflow" else "X-Console-CSRF"
+                csrf_name = "X-Workflow-CSRF" if self.path in {"/api/workflow", "/api/console/workflow"} else "X-Console-CSRF"
                 csrf = self.one(csrf_name)
                 if self.one("Content-Type") != "application/json" or not csrf or len(csrf) > 128:
                     self.reply(403)

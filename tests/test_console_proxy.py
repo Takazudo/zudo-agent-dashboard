@@ -97,6 +97,43 @@ class ProxyFixtures(unittest.TestCase):
         self.assertEqual(self.post("targets", {})[0], 200)
         self.assertEqual(self.post("targets", {}, changes={"Authorization": None})[0], 401)
 
+    def test_authenticated_workflow_route_and_workflow_csrf_forwarding(self):
+        def respond(handler):
+            self.assertEqual(handler.path, "/api/console/workflow")
+            if handler.headers.get("Authorization") != AUTH:
+                handler.send_response(401)
+                handler.send_header("WWW-Authenticate", 'Basic realm="fixture"')
+                handler.end_headers()
+                return
+            handler.send_response(200)
+            handler.send_header("Content-Type", "application/json")
+            handler.end_headers()
+            handler.wfile.write(b'{"csrf":"fixture-workflow-csrf","sessions":[]}')
+
+        upstream = self.upstream(respond)
+        status, body, _ = self.request("/api/console/workflow")
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["sessions"], [])
+        forwarded, _ = self.records[-1]
+        self.assertEqual(forwarded["Authorization"], AUTH)
+        self.assertEqual(forwarded["Host"], f"127.0.0.1:{upstream.server_port}")
+
+        payload = json.dumps(dict(id="fixture-session", lane="review", revision=0)).encode()
+        status, _, _ = self.request("/api/console/workflow", "POST", payload,
+                                    changes={"X-Workflow-CSRF": "fixture-workflow-csrf"})
+        self.assertEqual(status, 200)
+        forwarded, forwarded_body = self.records[-1]
+        self.assertEqual(forwarded["Authorization"], AUTH)
+        self.assertEqual(forwarded["X-Workflow-CSRF"], "fixture-workflow-csrf")
+        self.assertEqual(forwarded["Origin"], f"http://127.0.0.1:{upstream.server_port}")
+        self.assertEqual(forwarded_body, payload)
+
+        self.assertEqual(self.request("/api/console/workflow", changes={"Authorization": None})[0], 401)
+        self.assertEqual(self.request("/api/console/workflow", "POST", payload,
+                         changes={"X-Workflow-CSRF": None})[0], 403)
+        self.assertEqual(self.request("/api/console/workflow", "POST", payload,
+                         changes={"X-Workflow-CSRF": "fixture-workflow-csrf", "Origin": "https://evil.test"})[0], 403)
+
     def test_human_control_and_no_replay_through_adapter(self):
         status, body, _ = self.post("open", {k: TARGET[k] for k in ("project", "id", "machine")})
         self.assertEqual(status, 200); lease = json.loads(body)["lease"]

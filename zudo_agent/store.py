@@ -62,14 +62,18 @@ class Store:
     def workflow_move(self, key, lane, revision):
         with self.db:
             self.db.execute("BEGIN IMMEDIATE")
-            canonical = self.db.execute("SELECT canonical FROM workflow_alias WHERE alias=?", (key,)).fetchone()
-            key = canonical[0] if canonical else key
+            # A revision belongs to one identity. Never redirect an old run edit
+            # into a session, including when discovery races the HTTP checks.
+            if self.db.execute("SELECT 1 FROM workflow_alias WHERE alias=?", (key,)).fetchone():
+                return None, {"error": "Workflow identity changed; refresh before moving"}
             current = self.workflow_get(key)
             if current["revision"] != revision:
                 return None, current
             result = dict(lane=lane, revision=revision + 1)
+            latest = self.db.execute("SELECT MAX(edited) FROM workflow").fetchone()[0]
+            edited = max(time.time(), latest + 0.000001) if latest is not None else time.time()
             self.db.execute("INSERT INTO workflow VALUES (?,?,?,?) ON CONFLICT(id) DO UPDATE SET lane=excluded.lane,revision=excluded.revision,edited=excluded.edited",
-                            (key, lane, result["revision"], time.time()))
+                            (key, lane, result["revision"], edited))
             return result, None
 
     def workflow_reconcile(self, canonical, aliases):
@@ -78,12 +82,15 @@ class Store:
             self.db.execute("BEGIN IMMEDIATE")
             ids = [canonical, *aliases]
             rows = self.db.execute("SELECT id,lane,revision,edited FROM workflow WHERE id IN (" +
-                                   ",".join("?" for _ in ids) + ") ORDER BY edited DESC", ids).fetchall()
-            if rows and rows[0][0] != canonical:
+                                   ",".join("?" for _ in ids) + ") ORDER BY edited DESC,id", ids).fetchall()
+            current = next((row for row in rows if row[0] == canonical), None)
+            # Discovery is not a manual edit. Preserve the explicit edit time,
+            # prefer the canonical record on ties, and advance its revision.
+            if rows and (current is None or rows[0][3] > current[3]):
                 _old, lane, _rev, edited = rows[0]
-                existing = self.workflow_get(canonical)
+                revision = max(row[2] for row in rows) + 1
                 self.db.execute("INSERT INTO workflow VALUES (?,?,?,?) ON CONFLICT(id) DO UPDATE SET lane=excluded.lane,revision=excluded.revision,edited=excluded.edited",
-                                (canonical, lane, existing["revision"] + 1, time.time()))
+                                (canonical, lane, revision, edited))
             for alias in aliases:
                 self.db.execute("INSERT OR REPLACE INTO workflow_alias VALUES (?,?)", (alias, canonical))
             return self.workflow_get(canonical)

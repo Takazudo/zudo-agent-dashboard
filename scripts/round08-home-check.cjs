@@ -11,6 +11,7 @@ const complete = {...run,id:'run-complete',state:'completed',reachability:'prese
 const prior = {...run,id:'run-old',state:'ended',reachability:'absent'};
 const snapshot = {schema_version:1,mode:'local',generated_at:1,projects:[{id:'project',repository:'example/project',completion:'unknown',runs:[run,complete,prior]}],collectors:[{machine:'device',status:'offline',collector_status:'stopped',panes:0,unmatched_panes:0,checked_at:1,omitted_runs:2}]};
 let authenticated=false;
+const workflowReads=[];
 const workflow = {csrf:'token',items:{'run-key':{lane:'review',revision:2},'complete-key':{lane:'inbox',revision:0}},run_keys:[{id:'run-key',canonical:'run-key',project:'project',machine:'device',run:'run-a'},{id:'complete-key',canonical:'complete-key',project:'project',machine:'device',run:'run-complete'}],sessions:[]};
 const dom = new JSDOM(html,{url:'http://127.0.0.1:8765/',runScripts:'outside-only',pretendToBeVisual:true});
 const w = dom.window;
@@ -18,7 +19,7 @@ w.AbortSignal.timeout = () => undefined;
 w.setInterval = () => 1;
 w.fetch = async (url,options={}) => {
   if(url==='/api/snapshot') return {ok:true,json:async()=>snapshot};
-  if(url==='/api/workflow' && !options.method) { if(authenticated){workflow.run_keys[0].canonical='session-key';workflow.items['session-key']={lane:'done',revision:3};workflow.sessions=[{id:'session-key',session_id:'session-id',project:'project',machine:'device',panes:['pane-id'],runs:['run-a']}]} return {ok:true,json:async()=>workflow}; }
+  if(['/api/workflow','/api/console/workflow'].includes(url) && !options.method) { workflowReads.push(url);if(authenticated){workflow.run_keys[0].canonical='session-key';workflow.items['session-key']={lane:'done',revision:3};workflow.sessions=[{id:'session-key',session_id:'session-id',project:'project',machine:'device',panes:['pane-id'],runs:['run-a']}]} return {ok:true,json:async()=>workflow}; }
   if(url==='/api/console/status') return {ok:true,json:async()=>({enabled:true})};
   if(url==='/api/console/bootstrap'){authenticated=true;snapshot.collectors[0].status='connected';return {ok:true,json:async()=>({csrf:'console-token',identity:'fixture',allow_input:false})}}
   if(url==='/api/console/targets')return {ok:true,json:async()=>({targets:[{project:'project',machine:'device',id:'pane-id',session_id:'session-id',workflow_id:'session-key',run:'run-a',pane:'%1',foreground:'agent'}]})};
@@ -53,6 +54,7 @@ w.eval(app);
   w.document.querySelector('#authenticate-previews').click();
   await new Promise(resolve=>setTimeout(resolve,35));
   assert.equal(w.document.querySelectorAll('.session-card').length,2,'canonical session deduplicates observed run while completed run remains current');
+  assert.ok(workflowReads.includes('/api/console/workflow'),'authenticated preview flow reads sessions inside the console Basic protection space');
   assert.match(w.document.querySelector('[data-session-id="session-key"] .capture').textContent,/fixture recent output/);
   assert.equal(w.document.querySelectorAll('[data-node^=pane]').length,1);
   w.close();
