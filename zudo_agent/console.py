@@ -37,6 +37,10 @@ def load_policy(path, config):
         if len(data) > 8192:
             raise ValueError("Console policy exceeded the size limit")
     raw = strict_json(data)
+    return validate_policy(raw, config)
+
+
+def validate_policy(raw, config):
     exact(raw, {"identity", "password_sha256", "projects", "allow_input"})
     if not isinstance(raw["identity"], str) or not re.fullmatch(r"[a-zA-Z0-9@._+-]{1,128}", raw["identity"]):
         raise ValueError("Invalid console identity")

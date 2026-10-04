@@ -7,7 +7,7 @@ input continues to that shell as expected. Input may execute shell commands.
 
 The console is off by default. A private local policy separately permits viewing
 or control. Every connection starts read-only and requires an explicit **Enable
-control of this pane** action, even when the policy permits input. Only one lease
+control** action, even when the policy permits input. Only one lease
 can control a given pane at a time. The authenticated multi-device hub stays
 observation-only. No remote listener, proxy route, or network access is added.
 
@@ -23,12 +23,26 @@ Connect, inspect the pane, then explicitly enable control if authorized.
 
 - **Compose text / Send** supports Unicode, multiline text, and optional Enter.
   Newlines and Enter may execute commands; there is no content inspection.
-- **Interactive keyboard** sends typed text directly, including IME composition.
+- **Type directly** shows the interactive keyboard; typed text sends immediately, including IME composition.
   IME edits remain local until composition commits; they do not send premature
   delete or Enter keys. It supports Enter, Tab, Backspace, Delete, Escape, arrows, Home/End, Page Up/Down,
   and ASCII Ctrl combinations. Mobile buttons provide Enter, Tab, Esc, Ctrl-C,
   and arrows. Standard ANSI arrow sequences are sent; not every terminal's
   application-specific key encoding is emulated.
+- The input panel can be hidden and reopened without losing a Compose draft,
+  caret, mode, or chosen height in the same valid connection. Hiding it or changing
+  modes cancels unfinished direct IME input; tap the direct field, paste, type a
+  physical key, or start a fresh composition to enter new input afterward.
+  Drag its divider with a mouse or touch, or focus the divider and use Up/Down
+  (Shift for a larger step), Home or End. Enlarging the panel grows the textarea;
+  smaller viewports temporarily clamp its height to reserve visible output.
+- Background polling leaves input controls and unchanged output alone. A changed
+  snapshot keeps reading position above the bottom. Selecting output holds the
+  displayed snapshot; **Latest** clears that selection and shows the newest one.
+  This keeps at most one pending snapshot, not a scrollback history. Changing
+  targets or disconnecting also clears that pending snapshot and hidden drafts.
+- **Session info** contains full target/operator identity, lease expiry and pane
+  sizing. The foreground and selected project/pane remain visible in the main view.
 - **Pane size** explicitly requests 20–300 columns and 5–200 rows. This changes
   the shared tmux layout and is visible to other clients; tmux can clamp it.
 - Output is a **plain-text screen snapshot refreshed every 500 ms**, at most 200
@@ -100,7 +114,8 @@ Approval to implement this feature is not live activation approval.
    bytes) through their existing secret-management process. Do not reuse public
    fixture passwords or hub/device credentials. SHA-256 is used as a verifier
    for this secret, not as password stretching for a memorable password.
-2. The human writes an owner-only regular file, mode `0600`, outside the repo,
+2. Use the [hidden-input policy command](../README.md#set-a-console-password-locally-does-not-activate-the-console)
+   locally to create an owner-only regular file, mode `0600`, outside the repo,
    containing exactly `identity`, `password_sha256` (64 lowercase hex digits),
    `projects` (explicit configured IDs), and `allow_input`. Set `allow_input:
    false` for viewing only; set it to `true` **only after separate approval of
@@ -118,10 +133,11 @@ Approval to implement this feature is not live activation approval.
 5. Revoke access by stopping the foreground process and restarting without
    `--console-policy`. Restart invalidates leases, their clients, and CSRF proof.
 
-Do not expose these endpoints through the existing x0x route. No TLS/proxy,
-tailnet audience, DNS, network/ACL/firewall, persistent service, global hook,
-or multi-device terminal transport change is included. Mobile layout is tested,
-but accessing it from a separate phone/network remains a separate proposal.
+Do not expose these endpoints through the existing x0x route. The optional
+[Tailscale Serve adapter proposal](tailscale-console-proxy.md) uses a separate
+HTTPS port and preserves the read-only route. Its activation remains a separate
+approval; no live tailnet, DNS, network/ACL/firewall, persistent service, global
+hook, or multi-device terminal transport change is included.
 The assistant must never use this feature to operate real user agents or evade
 an earlier denial of assistant input.
 
@@ -137,6 +153,10 @@ default/user server. Cleanup kills only the private fixture server.
 
 `npm ci && npm run test:browser` uses the same isolation for browser control QA,
 including desktop/mobile interaction and a response lost after input delivery.
+The UI checks cover unchanged/changed refreshes, selection and caret preservation,
+mouse/touch/keyboard panel sizing, viewport bounds, deferred control/resize during
+polling, control-off queue clearing and cancelled IME events across target changes.
+Browser automation is not physical-phone keyboard or screen-reader validation.
 It also runs the original dashboard regressions. Linux and tmux are required for
 the console browser fixture; `CHROMIUM_PATH` can select an installed Chromium.
 Native macOS metadata and common console tests run in macOS CI; the real PTY

@@ -25,6 +25,8 @@ jobs:
       - name: Verify installed setup runner outside checkout
         working-directory: '${{ runner.temp }}'
         run: |
+          python -m zudo_agent console-proxy --help
+          python -m zudo_agent console-policy --help
           python -m zudo_agent.setup verify-synthetic --provider claude
           python -m zudo_agent.setup verify-synthetic --provider codex
   browser:
