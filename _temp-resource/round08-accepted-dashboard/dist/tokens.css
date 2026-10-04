@@ -1,0 +1,93 @@
+/* Three tiers: raw palette → semantic mode map → component aliases. */
+:root {
+  --palette-dark-00: #1c1c1c;
+  --palette-dark-01: #252525;
+  --palette-dark-02: #2c2c2c;
+  --palette-dark-03: #181818;
+  --palette-dark-04: #e0e0e0;
+  --palette-dark-05: #b8b8b8;
+  --palette-dark-06: #b8b8b8;
+  --palette-dark-07: #847e76;
+  --palette-dark-08: #484643;
+  --palette-dark-09: #d3ad7e;
+  --palette-dark-10: #211c16;
+  --palette-dark-11: #3b3630;
+  --palette-dark-12: #383838;
+  --palette-dark-13: #514532;
+  --palette-dark-14: #acd5ae;
+  --palette-dark-15: #e7c28d;
+  --palette-dark-16: #f3aaa0;
+  --palette-dark-17: #acd1f3;
+  --palette-dark-18: #c9bfeb;
+  --palette-dark-19: #e3bc8d;
+  --palette-light-00: #e0e0e0;
+  --palette-light-01: #eeeeec;
+  --palette-light-02: #d9d9d7;
+  --palette-light-03: #f8f8f6;
+  --palette-light-04: #333333;
+  --palette-light-05: #514d49;
+  --palette-light-06: #514d49;
+  --palette-light-07: #76706a;
+  --palette-light-08: #b0aba5;
+  --palette-light-09: #52616b;
+  --palette-light-10: #ffffff;
+  --palette-light-11: #d9d9d9;
+  --palette-light-12: #c4c4c4;
+  --palette-light-13: #c8d5de;
+  --palette-light-14: #266538;
+  --palette-light-15: #735012;
+  --palette-light-16: #9f301f;
+  --palette-light-17: #1f5f99;
+  --palette-light-18: #644f8d;
+  --palette-light-19: #52616b;
+}
+:root, :root[data-color-mode="dark"] {
+  color-scheme: dark;
+  --canvas: var(--palette-dark-00);
+  --surface: var(--palette-dark-01);
+  --surface-raised: var(--palette-dark-02);
+  --editor-bg: var(--palette-dark-03);
+  --text: var(--palette-dark-04);
+  --muted: var(--palette-dark-05);
+  --quiet: var(--palette-dark-06);
+  --border: var(--palette-dark-07);
+  --border-subtle: var(--palette-dark-08);
+  --accent: var(--palette-dark-09);
+  --on-accent: var(--palette-dark-10);
+  --hover: var(--palette-dark-11);
+  --active: var(--palette-dark-12);
+  --selection: var(--palette-dark-13);
+  --success: var(--palette-dark-14);
+  --warning: var(--palette-dark-15);
+  --danger: var(--palette-dark-16);
+  --info: var(--palette-dark-17);
+  --idle: var(--palette-dark-18);
+  --focus: var(--palette-dark-19);
+  --line:var(--border-subtle);--panel:var(--surface);--mint:var(--accent);
+}
+:root[data-color-mode="light"] {
+  color-scheme: light;
+  --canvas: var(--palette-light-00);
+  --surface: var(--palette-light-01);
+  --surface-raised: var(--palette-light-02);
+  --editor-bg: var(--palette-light-03);
+  --text: var(--palette-light-04);
+  --muted: var(--palette-light-05);
+  --quiet: var(--palette-light-06);
+  --border: var(--palette-light-07);
+  --border-subtle: var(--palette-light-08);
+  --accent: var(--palette-light-09);
+  --on-accent: var(--palette-light-10);
+  --hover: var(--palette-light-11);
+  --active: var(--palette-light-12);
+  --selection: var(--palette-light-13);
+  --success: var(--palette-light-14);
+  --warning: var(--palette-light-15);
+  --danger: var(--palette-light-16);
+  --info: var(--palette-light-17);
+  --idle: var(--palette-light-18);
+  --focus: var(--palette-light-19);
+  --line:var(--border-subtle);--panel:var(--surface);--mint:var(--accent);
+}
+:root{color:var(--text);background:var(--canvas)}
+::selection{background:var(--selection);color:var(--text)}

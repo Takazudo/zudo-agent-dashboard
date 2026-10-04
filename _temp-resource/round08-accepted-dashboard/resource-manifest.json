@@ -1,0 +1,141 @@
+{
+  "round": 8,
+  "purpose": "Accepted implementation reference; inert resources only",
+  "source_revision": "dc9a9ef6274fce1d6b197f37cee63eb48033bd33",
+  "sanitation": "Only synthetic absolute-looking fixture roots replaced with explicit synthetic labels; private metadata and unrelated history excluded",
+  "files": [
+    {
+      "path": "README.md",
+      "bytes": 2369,
+      "sha256": "df7012e213a0ea5c6c12690f4384a80cd5ce1c527c26af0879ff812e390e5586",
+      "git_blob_sha": "d59721d7f6719986c9c5bef1974f6269eb3813a7",
+      "provenance": "authored accepted handoff documentation"
+    },
+    {
+      "path": "accepted-decisions.md",
+      "bytes": 7383,
+      "sha256": "3bd72573c14d7e756ba677d86ac34353dd0430ad30bc0fc6d89e4ca22551b9a2",
+      "git_blob_sha": "0d1160fcf0d2edced57537aa558e08aa945f0fce",
+      "provenance": "authored accepted handoff documentation"
+    },
+    {
+      "path": "dist/THIRD_PARTY_NOTICES.txt",
+      "bytes": 15007,
+      "sha256": "8663ed83bfc9b2c0e39dd6382ba9fd2771fa462845aa8bcbda8c8b55006f4303",
+      "git_blob_sha": "efd9fb958f5f051c71b4f3abf95b125a52e19b32",
+      "provenance": "exact accepted source"
+    },
+    {
+      "path": "dist/console-runtime.js",
+      "bytes": 17680,
+      "sha256": "d2fa3e07b89826a0e6671bb58a35f7f5dd8a3faac6bb739b33a61a914130ba88",
+      "git_blob_sha": "ab867b026296c8a47314db6c0a29b798a9cfff08",
+      "provenance": "exact accepted source"
+    },
+    {
+      "path": "dist/console.html",
+      "bytes": 32545,
+      "sha256": "cc6f2d34863729e12939bffdce37e3bf02d09c01cfd5d08e9f316fb48bb643c1",
+      "git_blob_sha": "1e398821a14f6d302963e9a83061a7059dbc5f22",
+      "provenance": "exact accepted source"
+    },
+    {
+      "path": "dist/dashboard.css",
+      "bytes": 28932,
+      "sha256": "8097f48ed92b962a8eae922a15f565e18068ef09132b010ae33a1c85451b0cca",
+      "git_blob_sha": "ed4ba86535b1f7ef9b19749eacad2040521f9ae2",
+      "provenance": "exact accepted source"
+    },
+    {
+      "path": "dist/dashboard.js",
+      "bytes": 21764,
+      "sha256": "db1168cea0e49dc6aed27960cc13f529ba0a7e406347def857c0d2577f23b32b",
+      "git_blob_sha": "361b5cefe9bf1bf026b2bb3e70cc1a237dd0c3cb",
+      "provenance": "exact accepted source"
+    },
+    {
+      "path": "dist/editor.js",
+      "bytes": 428919,
+      "sha256": "372e5bf921db7485690ca3a83cf2589861a63af16db9f1401bd7a78b7e4feba6",
+      "git_blob_sha": "1317d78438d6a1a33cfd11ab97654784ce7986f7",
+      "provenance": "exact accepted source"
+    },
+    {
+      "path": "dist/favicon.svg",
+      "bytes": 184,
+      "sha256": "fc4a7960c7212473a50107646765777df3464eb9ab4fdf8f25607edfb39a8dd9",
+      "git_blob_sha": "1ea17a46cc935cc64a9bcfa831221d3dcf291317",
+      "provenance": "exact accepted source"
+    },
+    {
+      "path": "dist/fixtures.js",
+      "bytes": 13552,
+      "sha256": "b487c3004be9a4c86585f42801ac1e1c2e3ed4c5e0f728246d1d3a4f877b48c6",
+      "git_blob_sha": "529e8e173a29f6d814fa3f697b906feb73af4dd3",
+      "provenance": "sanitized synthetic fixture"
+    },
+    {
+      "path": "dist/index.html",
+      "bytes": 8995,
+      "sha256": "2f1483d16d878fa45171b09c527569c4103d1cad1cae53c0b2f6d096cf1a15e3",
+      "git_blob_sha": "758a335d36dff3ba7d1410ae532ab8b6cb949efa",
+      "provenance": "exact accepted source"
+    },
+    {
+      "path": "dist/model.js",
+      "bytes": 1583,
+      "sha256": "f12a970731abba78e32bbf35357bcd7591ec57816af8896349904e5f802abeaa",
+      "git_blob_sha": "b55ae53f6fe1c71414cb92158561ab652a9ab86e",
+      "provenance": "exact accepted source"
+    },
+    {
+      "path": "dist/preferences.js",
+      "bytes": 4939,
+      "sha256": "228e33a589bc2492bb2b01ba75b486867c5a3fea7d91e9db2609090daa0b951f",
+      "git_blob_sha": "eb9c8978b97af196fac1c237cde3c46e3f96cf53",
+      "provenance": "exact accepted source"
+    },
+    {
+      "path": "dist/round08.css",
+      "bytes": 9075,
+      "sha256": "d1d57212d6cf5d16fac0791c1d8af3541dde162e0965ea0f3a1188b9a7a75064",
+      "git_blob_sha": "ab2c83e0122539f63fb89d1a571d98d5ecc51374",
+      "provenance": "exact accepted source"
+    },
+    {
+      "path": "dist/tokens.css",
+      "bytes": 3180,
+      "sha256": "c8d7cef0dc4571db9c8c531344f3e9a4bea1815d9af365b1e4e5472cf14503bf",
+      "git_blob_sha": "e3e2e7953e02e068b5c757ca1a35d45cba001bc0",
+      "provenance": "exact accepted source"
+    },
+    {
+      "path": "editor-src/composer.js",
+      "bytes": 6449,
+      "sha256": "b599b09e2c285fde9ab59c08f7c9c6c4bb752b5fddd35a9e059430ad437d3cec",
+      "git_blob_sha": "1ed62c009801d19b3ed8e01b76e77b8277dfc9f7",
+      "provenance": "exact accepted source"
+    },
+    {
+      "path": "package-lock.json",
+      "bytes": 38289,
+      "sha256": "9bf4697c49e70f645a78edd6382814d8808abcc5c69f8e530a99017560f9f8a9",
+      "git_blob_sha": "10aa20f0d2ee7b04b99402f7868e938d61ba41f9",
+      "provenance": "exact accepted source"
+    },
+    {
+      "path": "package.json",
+      "bytes": 424,
+      "sha256": "5ffaa952b6450c397dbb50bb49cb541f00e864369b66c7135d0cc7896a7e791c",
+      "git_blob_sha": "a0b394d8f292364e602e9bf89b41c11c6d1ddd7c",
+      "provenance": "exact accepted source"
+    },
+    {
+      "path": "references.md",
+      "bytes": 4549,
+      "sha256": "f977bb1caf00a442b5480305c967bd76e096f5f1a79d1cdf6bbaab04d419aac9",
+      "git_blob_sha": "dc0079e0d156f269b8e4f7121a0896ab5b137bb0",
+      "provenance": "authored accepted handoff documentation"
+    }
+  ]
+}
