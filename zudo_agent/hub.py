@@ -6,6 +6,7 @@ import ipaddress
 import json
 import os
 import re
+import secrets
 import sqlite3
 import ssl
 import stat
@@ -16,6 +17,8 @@ from pathlib import Path
 
 from .model import DIGEST, REPO, digest, slug, timestamp
 from .transport import MAX_BODY, MAX_RUNS, private_address
+from .store import Store
+from .workflow import Workflow, known_runs, LANES
 
 
 class Rejected(ValueError):
@@ -142,10 +145,16 @@ class HubStore:
         self.db = sqlite3.connect(path, timeout=3)
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.execute("CREATE TABLE IF NOT EXISTS frames(machine TEXT, stream TEXT, sequence INTEGER, fingerprint TEXT, body TEXT, received REAL, PRIMARY KEY(machine,stream))")
+        self.db.execute("CREATE TABLE IF NOT EXISTS workflow(id TEXT PRIMARY KEY, lane TEXT NOT NULL, revision INTEGER NOT NULL, edited REAL NOT NULL)")
+        self.db.execute("CREATE TABLE IF NOT EXISTS workflow_alias(alias TEXT PRIMARY KEY, canonical TEXT NOT NULL)")
         self.db.commit()
 
     def close(self):
         self.db.close()
+
+    workflow_get = Store.workflow_get
+    workflow_move = Store.workflow_move
+    workflow_canonical = Store.workflow_canonical
 
     def ingest(self, raw, machine, now=None):
         frame = validate_frame(raw, machine, self.registry)
@@ -238,27 +247,41 @@ def make_hub_server(registry, db_path, bind="127.0.0.1", port=8765, cert=None, k
     assets = Path(__file__).with_name("web")
     initial = HubStore(db_path, registry)
     initial.close()
+    workflow = Workflow()
+    scheme = "https" if cert else "http"
 
     class Handler(BaseHTTPRequestHandler):
         def reply(self, status, body, mime="application/json", challenge=False):
+            nonce = secrets.token_urlsafe(24)
+            if mime == "text/html":
+                body = body.replace(b"<head>", b'<head><meta name="csp-nonce" content="' + nonce.encode() + b'">', 1)
             self.send_response(status)
             self.send_header("Content-Type", mime + "; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
             self.send_header("X-Content-Type-Options", "nosniff")
-            self.send_header("Content-Security-Policy", "default-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
+            self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'nonce-" + nonce + "'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
             if challenge:
                 self.send_header("WWW-Authenticate", 'Basic realm="Zudo read-only hub"')
             self.end_headers()
             self.wfile.write(body)
 
         def host_ok(self):
-            host = self.headers.get("Host", "")
+            values = self.headers.get_all("Host", [])
+            if len(values) != 1:
+                return False
+            host = values[0]
             name, separator, port_text = host.partition(":")
-            return name in registry["allowed_hosts"] and (not separator or port_text.isdigit() and 1 <= int(port_text) <= 65535)
+            expected_port = self.server.server_port
+            return (name in registry["allowed_hosts"] and
+                    ((separator and port_text == str(expected_port)) or
+                     (not separator and expected_port == (443 if cert else 80))))
 
         def auth(self, viewer=False):
-            value = self.headers.get("Authorization", "")
+            values = self.headers.get_all("Authorization", [])
+            if len(values) != 1:
+                return None
+            value = values[0]
             if len(value) > 512:
                 return None
             if viewer:
@@ -290,7 +313,7 @@ def make_hub_server(registry, db_path, bind="127.0.0.1", port=8765, cert=None, k
             if not self.auth(viewer=True):
                 self.reply(401, b'{}', challenge=True)
                 return
-            route = self.path.split("?", 1)[0]
+            route = self.path
             if route == "/api/snapshot":
                 store = HubStore(db_path, registry)
                 try:
@@ -298,15 +321,59 @@ def make_hub_server(registry, db_path, bind="127.0.0.1", port=8765, cert=None, k
                 finally:
                     store.close()
                 self.reply(200, body)
-            elif route in {"/", "/app.js", "/style.css"}:
-                name, mime = {"/": ("index.html", "text/html"), "/app.js": ("app.js", "text/javascript"), "/style.css": ("style.css", "text/css")}[route]
+            elif route == "/api/workflow":
+                store = None
+                try:
+                    store = HubStore(db_path, registry)
+                    runs = known_runs(store.snapshot())
+                    items = workflow.state(store, runs)
+                    self.reply(200, json.dumps(dict(csrf=workflow.csrf, lanes=list(LANES), items=items,
+                        run_keys=[dict(id=key, canonical=store.workflow_canonical(key), **item) for key, item in runs.items()], sessions=[])).encode())
+                except sqlite3.OperationalError:
+                    self.reply(503, b'{"error":"Workflow temporarily unavailable"}')
+                finally:
+                    if store: store.close()
+            elif route in {"/", "/app.js", "/style.css", "/preferences.js", "/tokens.css", "/dashboard.css", "/detail.css", "/editor.js", "/THIRD_PARTY_NOTICES.txt", "/favicon.svg"}:
+                name = "index.html" if route == "/" else route[1:]
+                mime = "text/html" if route == "/" else "text/javascript" if name.endswith(".js") else "text/css" if name.endswith(".css") else "image/svg+xml" if name.endswith(".svg") else "text/plain"
                 self.reply(200, (assets / name).read_bytes(), mime)
             else:
                 self.reply(404, b'{}')
 
         def do_POST(self):
-            if not self.host_ok() or self.path != "/api/ingest":
+            if not self.host_ok() or self.path not in {"/api/ingest", "/api/workflow"}:
                 self.reply(404, b'{}')
+                return
+            if self.path == "/api/workflow":
+                if not self.auth(viewer=True):
+                    self.reply(401, b'{}', challenge=True)
+                    return
+                if (self.headers.get_all("Origin", []) != [scheme + "://" + self.headers["Host"]] or
+                        self.headers.get_all("X-Workflow-CSRF", []) != [workflow.csrf] or
+                        self.headers.get_all("Content-Type", []) != ["application/json"] or
+                        self.headers.get_all("Transfer-Encoding") is not None or
+                        len(self.headers.get_all("Content-Length", [])) != 1):
+                    self.reply(403, b'{}')
+                    return
+                store = None
+                try:
+                    size = int(self.headers["Content-Length"])
+                    if not 0 < size <= 32768:
+                        raise Rejected("Invalid size")
+                    body = strict_json(self.rfile.read(size))
+                    exact(body, {"id", "lane", "revision"})
+                    store = HubStore(db_path, registry)
+                    if body["id"] not in known_runs(store.snapshot(), current=True):
+                        self.reply(409, b'{"error":"Workflow target no longer current"}')
+                        return
+                    updated, current = workflow.move(store, body["id"], body["lane"], body["revision"])
+                    self.reply(409 if current else 200, json.dumps(dict(id=body["id"], **(current or updated))).encode())
+                except (ValueError, KeyError, TypeError, UnicodeError, RecursionError):
+                    self.reply(400, b'{}')
+                except sqlite3.OperationalError:
+                    self.reply(503, b'{"error":"Workflow temporarily unavailable"}')
+                finally:
+                    if store: store.close()
                 return
             machine = self.auth()
             if not machine:
