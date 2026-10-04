@@ -1,124 +1,82 @@
 "use strict";
-let snapshot = null;
-let failed = false;
-let pending = false;
-let consoleEnabled = false;
-const $ = (id) => document.getElementById(id);
-const labels = {working: "Working", "needs-attention": "Needs attention", idle: "Turn stopped", unknown: "Unknown", "error-observed": "Error observed", ended: "Session ended", completed: "Task completed"};
-function el(tag, text, className) {
-  const node = document.createElement(tag);
-  if (text !== undefined) node.textContent = text;
-  if (className) node.className = className;
-  return node;
+/* Dashboard observations and manual metadata never authorize terminal control. */
+const $ = id => document.getElementById(id);
+const icon = name => `<svg class="icon" aria-hidden="true"><use href="#i-${name}"></use></svg>`;
+const escapeHTML = value => String(value ?? "").replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const workflows = [{id:'inbox',label:'Inbox'},{id:'progress',label:'In progress'},{id:'review',label:'Review'},{id:'done',label:'Done'}];
+const stateLabels = {'no-agent':'No agent running',working:'Working','needs-attention':'Waiting for input',idle:'Idle','error-observed':'Error observed',completed:'Task completed',ended:'Session ended',unknown:'Unknown'};
+let snapshot=null, workflow=null, sessions=[], targets=[], consoleToken=null, consoleEnabled=false, previewsAllowed=false, failed=false, refreshing=false;
+let scope={}, view='gallery', size='m', activity='all', query='', currentId=null, currentPane=null, pendingPane=null, bridgeRequest=0, frameReady=false, expanded=false, returnFocus=null;
+const expandedNodes=new Set(), laneScroll=new Map(); let focusedNode=null, dragId=null, toastTimer=null, previewGeneration=0;
+const age = at => !Number.isFinite(Number(at)) || !at ? 'time unknown' : (()=>{let s=Math.max(0,Math.floor(Date.now()/1000-Number(at)));return s<60?`${s}s ago`:s<3600?`${Math.floor(s/60)}m ago`:`${Math.floor(s/3600)}h ago`})();
+const previous = r => r.reachability==='absent'||r.state==='ended';
+const stale = r => failed||r.freshness==='stale'||r.state_freshness==='stale'||['offline','disconnected','absent'].includes(r.reachability);
+function observation(r){if(!r)return {activity:'unknown',label:'Unknown',confidence:'unknown',freshness:'unknown',evidence:'No current agent observed',age:'time unknown'};const a=r.state==='needs-attention'?'waiting':r.state==='error-observed'?'unknown':r.state==='completed'?'completed':r.state==='working'?'working':r.state==='idle'?'idle':r.state==='no-agent'?'no-agent':'unknown';return {activity:a,label:r.reachability==='absent'?'No longer present':stateLabels[r.state]||'Unknown',confidence:r.confidence||'unknown',freshness:stale(r)?'stale':'fresh',evidence:r.evidence||'No evidence available',age:age(r.state_at)};}
+function keyFor(project,run){return workflow?.run_keys?.find(k=>k.project===project&&k.machine===run.machine&&k.run===run.id)?.canonical||null;}
+function buildSessions(){const oldPreview=new Map(sessions.map(s=>[s.id,s.preview]));const items=new Map();const runMaps=new Map();for(const p of snapshot?.projects||[])for(const r of p.runs||[]){if(previous(r))continue;const key=keyFor(p.id,r)||`observation:${p.id}:${r.machine}:${r.id}`;const arr=runMaps.get(key)||[];arr.push({project:p,run:r});runMaps.set(key,arr)}
+ for(const meta of workflow?.sessions||[]){const related=runMaps.get(meta.id)||[];const matched=targets.filter(t=>t.workflow_id===meta.id&&t.project===meta.project&&t.machine===meta.machine);const paneIds=new Set(meta.panes||[]);const panes=matched.filter(t=>paneIds.has(t.id));if(!panes.length)continue;const first=panes[0],primary=first.run?related.find(x=>x.run.id===first.run)?.run||null:{state:'no-agent',source:'tmux',reachability:'present',evidence:'Authorized pane has no matched agent run',confidence:'observed'};items.set(meta.id,{id:meta.id,sessionId:meta.session_id,project:meta.project,device:meta.machine,name:meta.session_id?.slice(0,10)||'Local session',title:first.run?`${primary?.source||'Agent'} · ${first.run.slice(0,8)}`:`Local tmux session · ${first.pane||'pane'}`,runs:related.map(x=>x.run),panes,primary,remote:false,preview:['offline','disconnected'].includes((snapshot?.collectors||[]).find(c=>c.machine===meta.machine)?.status)?null:oldPreview.get(meta.id)||null});}
+ for(const [key,related] of runMaps){if(items.has(key))continue;const {project,run}=related[0];items.set(key,{id:key,project:project.id,device:run.machine,name:run.id.slice(0,10),title:`${run.source||'Observed run'} · ${run.id.slice(0,8)}`,runs:related.map(x=>x.run),panes:[],primary:run,remote:true,preview:null});}
+ sessions=[...items.values()].map(s=>({...s,workflowKnown:!!workflow?.items?.[s.id],lane:workflow?.items?.[s.id]?.lane||'inbox',revision:workflow?.items?.[s.id]?.revision||0}));}
+function selectedSessions(){const q=query.toLowerCase();return sessions.filter(s=>(!scope.device||s.device===scope.device)&&(!scope.project||s.project===scope.project)&&(!scope.session||s.id===scope.session)&&(activity==='all'||observation(s.primary).activity===activity)&&(!q||[s.device,s.project,s.title,s.name,...s.panes.map(p=>p.pane||p.id)].join(' ').toLowerCase().includes(q)));}
+function observed(r){const o=observation(r);return `<span class="observed ${o.activity}">${icon(o.activity==='waiting'?'message':o.activity==='completed'?'check':o.activity==='working'?'activity':'help')}<span>${escapeHTML(o.label)}</span>${o.freshness==='stale'?'<span class="stale">STALE</span>':''}</span><div class="observation-meta"><span>${escapeHTML(o.confidence)} confidence · ${o.freshness}</span><span>${o.age}</span></div>`;}
+function card(s){const p=s.panes[0], canInspect=!s.remote&&!!p, preview=s.preview?.screen;const capture=preview?escapeHTML(preview).split('\n').slice(-25).map(t=>`<span class="capture-line">${t||' '}</span>`).join(''):s.remote?'Capture unavailable: observation only; no authorized local pane.':!previewsAllowed?'Authenticate previews to see recent local output.':'Preview unavailable for this pane.';return `<article class="session-card" data-session-id="${escapeHTML(s.id)}" ${view==='board'?'draggable="true"':''}><button class="card-preview" data-open="${escapeHTML(s.id)}" ${canInspect?'':'disabled'} aria-label="${canInspect?'Inspect':'Capture unavailable for'} ${escapeHTML(s.title)}"><span class="capture-chrome"><span>${escapeHTML(s.remote?'Observation only':p.pane||'Local pane')}</span><span class="pane-count">${s.panes.length} ${s.panes.length===1?'pane':'panes'}</span></span><span class="capture ${preview?'':'empty'}">${capture}</span><span class="card-open-cue">Inspect session</span></button><div class="card-info"><div class="card-heading"><button class="card-title" data-open="${escapeHTML(s.id)}" ${canInspect?'':'disabled'}><span>${escapeHTML(s.title)}</span></button>${view==='board'?`<span class="drag-handle" aria-hidden="true">${icon('grip')}</span>`:''}</div><p class="card-origin">${escapeHTML(s.device)} / ${escapeHTML(s.project)}</p><div><span class="field-label">${s.remote?'Observed run':'Primary pane observation'}</span>${observed(s.primary)}</div><p class="preview-status">${escapeHTML(s.primary?.evidence||'No agent lifecycle evidence')} · ${escapeHTML(s.primary?.reachability||'local pane')}</p></div><label class="card-workflow"><span class="field-label">Manual workflow</span><select data-move="${escapeHTML(s.id)}" aria-label="Manual workflow for ${escapeHTML(s.title)}">${workflows.map(w=>`<option value="${w.id}" ${w.id===s.lane?'selected':''}>${w.label}</option>`).join('')}</select></label></article>`;}
+function renderCards(){const surface=$('session-surface'), oldTop=surface.scrollTop,oldLeft=surface.scrollLeft;for(const el of surface.querySelectorAll('[data-scroll-lane]'))laneScroll.set(el.dataset.scrollLane,el.scrollTop);const shown=selectedSessions();surface.dataset.thumbnailSize=size;surface.classList.toggle('compact',size==='s');surface.classList.toggle('large',size==='l');surface.classList.toggle('board-mode',view==='board');$('workspace').classList.toggle('board-view',view==='board');surface.innerHTML=shown.length?(view==='gallery'?`<div class="gallery">${shown.map(card).join('')}</div>`:`<div class="board" aria-label="Manual workflow board">${workflows.map(w=>{const arr=shown.filter(s=>s.lane===w.id);return `<section class="board-lane" data-drop="${w.id}" aria-label="${w.label} workflow"><header class="lane-header" data-lane="${w.id}"><span class="lane-marker"></span><h2>${w.label}</h2><span class="count">${arr.length}</span></header><div class="lane-cards" data-scroll-lane="${w.id}" tabindex="0" role="region" aria-label="${w.label} session cards">${arr.map(card).join('')||'<div class="empty-lane">Drop a session here<br>or use its workflow menu</div>'}</div></section>`}).join('')}</div>`):'<div class="empty-results"><h2>No matching sessions</h2><p>Try another project, activity or search.</p><button id="clear-filters">Show all sessions</button></div>';surface.scrollTop=oldTop;surface.scrollLeft=oldLeft;for(const el of surface.querySelectorAll('[data-scroll-lane]'))el.scrollTop=laneScroll.get(el.dataset.scrollLane)||0;$('session-count').textContent=shown.length;$('surface-summary').textContent=`${shown.length} of ${sessions.length} current sessions · ${view==='gallery'?'gallery':'manual workflow'}`;$('scope-title').firstChild.textContent=scope.session?'Session ':scope.project?scope.project+' ':scope.device?scope.device+' ':'Session library ';$('breadcrumb').textContent=[scope.device,scope.project].filter(Boolean).join(' / ')||'All devices';}
+function renderHealth(){const collectors=snapshot?.collectors||[],devices=[...new Set([...collectors.map(c=>c.machine),...sessions.map(s=>s.device)])];$('device-count').textContent=`${devices.length} ${devices.length===1?'device':'devices'}`;$('home-health').innerHTML=devices.map(device=>{const c=collectors.find(x=>x.machine===device),own=sessions.filter(s=>s.device===device),ps=(snapshot.projects||[]).filter(p=>p.runs?.some(r=>r.machine===device));return `<button class="device-summary ${scope.device===device?'selected':''}" data-device-scope="${escapeHTML(device)}" aria-pressed="${scope.device===device}"><span class="device-summary-title">${icon('device')}<strong>${escapeHTML(device)}</strong><span class="health-indicator ${!c||c.status==='connected'?'':'attention'}">${escapeHTML(failed?'Snapshot stale':c?.status||'No collector')}</span></span><span class="device-summary-meta">${own.length} current sessions · ${ps.length} projects · ${c?.panes??0} panes</span><span class="device-summary-age">${c?.unmatched_panes??0} unassigned / no agent · collector ${escapeHTML(c?.collector_status||'unknown')} · ${c?.checked_at?age(c.checked_at):'no snapshot received'}${c?.omitted_runs?` · ${c.omitted_runs} older runs omitted`:''}</span></button>`}).join('')||'<p class="project-health">No collector observation yet.</p>';
+ const history=(snapshot.projects||[]).map(p=>{const prior=(p.runs||[]).filter(previous),current=(p.runs||[]).filter(r=>!previous(r));return `<div class="project-health"><strong>${escapeHTML(p.id)}</strong> · ${escapeHTML(p.repository||'repository unknown')} · ${current.length} current · ${prior.length} previous · completion ${escapeHTML(p.completion||'unknown')}<details class="history"><summary>Previous runs (${prior.length})</summary>${prior.length?`<ol>${prior.map(r=>`<li>${escapeHTML(r.source||'Agent')} · ${escapeHTML(r.id)} · ${escapeHTML(stateLabels[r.state]||r.state)} · ${escapeHTML(r.reachability)} · ${age(r.state_at)} · ${escapeHTML(r.evidence||'No evidence')}</li>`).join('')}</ol>`:'No previous runs.'}</details></div>`}).join('');$('project-history').innerHTML=history||'<p class="project-health">No projects configured.</p>';}
+function treeModel(){const roots=[];for(const device of [...new Set([...(snapshot?.collectors||[]).map(c=>c.machine),...sessions.map(s=>s.device)])]){const d={id:`device:${device}`,label:device,kind:'device',scope:{device},children:[]};for(const project of (snapshot?.projects||[]).filter(p=>p.runs?.some(r=>r.machine===device)||sessions.some(s=>s.device===device&&s.project===p.id))){const p={id:`project:${device}:${project.id}`,label:project.id,kind:'folder',scope:{device,project:project.id},children:[]};for(const s of sessions.filter(s=>s.device===device&&s.project===project.id)){const n={id:`session:${s.id}`,label:s.title,kind:'session',scope:{device,project:project.id,session:s.id},session:s,children:[]};for(const pane of s.panes)n.children.push({id:`pane:${pane.id}`,label:`${pane.pane||'Pane'} · ${pane.foreground||'shell'}`,kind:'terminal',scope:n.scope,session:s,pane,children:[]});p.children.push(n)}d.children.push(p)}roots.push(d)}return roots;}
+function renderTree(){const roots=treeModel(), all=new Map();function index(ns){for(const n of ns){all.set(n.id,n);index(n.children)}}index(roots);window.homeTreeNodes=all;if(!focusedNode||!all.has(focusedNode))focusedNode=roots[0]?.id||null;function draw(n,depth,last){const open=expandedNodes.has(n.id),selected=(n.kind==='device'&&scope.device===n.scope.device&&!scope.project)||(n.kind==='folder'&&scope.project===n.scope.project&&scope.device===n.scope.device&&!scope.session)||(n.kind==='session'&&scope.session===n.session?.id),current=n.pane?.id===currentPane&&n.session?.id===currentId,gid=`group-${escapeHTML(n.id).replace(/[^a-z0-9_-]/gi,'-')}`;return `<li class="tree-item ${last?'is-last':''}" role="none" data-depth="${depth}">${depth?'<span class="tree-vline"></span>':''}<div class="tree-row ${selected?'is-selected':''} ${current?'is-current':''}" data-depth="${depth}">${depth?'<span class="tree-elbow"></span>':''}<button class="tree-label" role="treeitem" data-node="${escapeHTML(n.id)}" aria-level="${depth+1}" aria-selected="${selected||current}" ${n.children.length?`aria-expanded="${open}" aria-owns="${gid}"`:''} tabindex="${focusedNode===n.id?'0':'-1'}">${icon(n.kind)}<span class="label">${escapeHTML(n.label)}</span></button>${n.children.length?`<button class="tree-twisty" data-expand="${escapeHTML(n.id)}" aria-expanded="${open}" aria-controls="${gid}" aria-label="${open?'Collapse':'Expand'} ${escapeHTML(n.label)}">${icon('chevron')}</button>`:'<span class="tree-toggle-spacer"></span>'}</div>${n.children.length?`<ul id="${gid}" role="group" ${open?'':'hidden'}>${n.children.map((x,i)=>draw(x,depth+1,i===n.children.length-1)).join('')}</ul>`:''}</li>`;} $('tree').innerHTML=`<ul class="tree-list" role="tree" aria-label="Devices, projects, sessions and panes">${roots.map((x,i)=>draw(x,0,i===roots.length-1)).join('')}</ul>`;$('tree-total').textContent=`${sessions.length} sessions`;$('all-sessions').classList.toggle('selected',!Object.keys(scope).length);}
+function toast(message){clearTimeout(toastTimer);$('toast').textContent=message;$('toast').classList.add('show');toastTimer=setTimeout(()=>$('toast').classList.remove('show'),4500)}
+async function loadWorkflow(){try{const r=await fetch('/api/workflow',{cache:'no-store',signal:AbortSignal.timeout(4000)});if(!r.ok)throw Error(`Workflow ${r.status}`);workflow=await r.json();}catch{workflow=null;toast('Workflow metadata unavailable; moves are disabled.')}}
+async function move(id,lane){const s=sessions.find(x=>x.id===id);if(!s||s.lane===lane)return;if(!workflow?.csrf||!s.workflowKnown){toast('Workflow metadata unavailable for this session.');renderCards();return}try{const r=await fetch('/api/workflow',{method:'POST',cache:'no-store',headers:{'Content-Type':'application/json','X-Workflow-CSRF':workflow.csrf},body:JSON.stringify({id,lane,revision:s.revision})});if(r.status===409){await loadWorkflow();buildSessions();renderTree();renderCards();toast('This workflow changed or is no longer current. Review it and repeat your move.');return}if(!r.ok)throw Error(`Move ${r.status}`);const result=await r.json();workflow.items[id]={lane:result.lane,revision:result.revision};s.lane=result.lane;s.revision=result.revision;renderCards();if(currentId===id)$('inspector-workflow').value=lane;toast(`${s.title} moved to ${workflows.find(w=>w.id===lane)?.label}. Observed activity is unchanged.`)}catch{renderCards();toast('Move failed. Check connection and repeat.')}}
+async function refresh(){if(refreshing)return;previewGeneration++;refreshing=true;$('refresh').disabled=true;try{const r=await fetch('/api/snapshot',{cache:'no-store',signal:AbortSignal.timeout(4000)});if(!r.ok)throw Error('Snapshot unavailable');const next=await r.json();if(next.schema_version!==1||!Array.isArray(next.projects))throw Error('Invalid snapshot');snapshot=next;failed=false;await loadWorkflow();buildSessions();if(currentId&&!sessions.some(s=>s.id===currentId))closeInspector();renderHealth();renderTree();renderCards();$('mode').textContent=next.mode==='sample'?'Sample workspace':next.mode==='hub'?'Shared observations':'Local observations';$('notice').className='notice';$('notice').textContent=next.mode==='sample'?'Sample observations are synthetic.':next.mode==='hub'?'Registered device observations only. Remote capture and control are unavailable.':'Local observations. Project completion remains unknown.';$('updated').textContent=`Snapshot ${age(next.generated_at)}`;$('refresh-status').textContent=`Updated ${new Date().toLocaleTimeString()} · auto-refresh every 5s.`;}catch{failed=true;for(const s of sessions)s.preview=null;$('notice').className='notice warning';$('notice').textContent=snapshot?'Connection lost. Last observations may be stale.':'Cannot reach dashboard observations.';if(snapshot){renderHealth();renderTree();renderCards();}}finally{refreshing=false;$('refresh').disabled=false;}}
+async function checkConsole(){try{const r=await fetch('/api/console/status',{cache:'no-store',signal:AbortSignal.timeout(4000)});const x=r.ok?await r.json():null;consoleEnabled=x?.enabled===true;$('authenticate-previews').hidden=!consoleEnabled||snapshot?.mode==='hub'||snapshot?.mode==='sample';}catch{consoleEnabled=false;}}
+async function authenticatePreviews(){try{const b=await fetch('/api/console/bootstrap',{cache:'no-store'});if(!b.ok)throw Error(`Authentication ${b.status}`);const data=await b.json();consoleToken=data.csrf;const t=await fetch('/api/console/targets',{method:'POST',headers:{'Content-Type':'application/json','X-Console-CSRF':consoleToken},body:'{}'});if(!t.ok)throw Error(`Targets ${t.status}`);targets=(await t.json()).targets||[];previewsAllowed=true;$('authenticate-previews').textContent='Refresh previews';await loadWorkflow();buildSessions();renderHealth();renderTree();renderCards();await refreshPreviews();}catch{consoleToken=null;targets=[];previewsAllowed=false;for(const s of sessions)s.preview=null;renderCards();toast('Preview authentication failed or no targets are authorized.')}}
+async function refreshPreviews(){
+ const generation=++previewGeneration;
+ if(!previewsAllowed||!consoleToken||$('inspector').open)return;
+ const visible=new Set(selectedSessions().map(s=>s.id));
+ const previewable=sessions.filter(s=>visible.has(s.id)&&s.panes.length).slice(0,64);
+ const permitted=new Set(previewable.map(s=>s.id));
+ for(const s of sessions)if(!permitted.has(s.id))s.preview=null;
+ for(const s of previewable){
+  if(generation!==previewGeneration||$('inspector').open)break;
+  const p=s.panes[0];
+  try{
+   const r=await fetch('/api/console/preview',{method:'POST',cache:'no-store',headers:{'Content-Type':'application/json','X-Console-CSRF':consoleToken},body:JSON.stringify({project:p.project,machine:p.machine,id:p.id}),signal:AbortSignal.timeout(4000)});
+   if(r.status===401||r.status===403){consoleToken=null;previewsAllowed=false;targets=[];for(const item of sessions)item.preview=null;toast('Preview authorization ended. Authenticate again to capture.');break}
+   if(!r.ok){s.preview=null;continue}
+   const data=await r.json();
+   s.preview={screen:String(data.screen||'').split('\n').slice(-24).join('\n').slice(-8192),sampled_at:data.sampled_at,truncated:!!data.truncated};
+  }catch{s.preview=null}
+  if(generation===previewGeneration&&!$('inspector').open)renderCards();
+ }
 }
-function age(at) {
-  const seconds = Math.max(0, Math.floor(Date.now() / 1000 - at));
-  return seconds < 60 ? `${seconds}s ago` : seconds < 3600 ? `${Math.floor(seconds / 60)}m ago` : `${Math.floor(seconds / 3600)}h ago`;
-}
-function isStale(run) { return failed || run.freshness === "stale" || run.state_freshness === "stale"; }
-function isPrevious(run) { return run.reachability === "absent" || ["ended", "completed"].includes(run.state); }
-function render() {
-  if (!snapshot) return;
-  const sample = snapshot.mode === "sample";
-  const hub = snapshot.mode === "hub";
-  $("mode").textContent = sample ? "SAMPLE DATA" : hub ? "SHARED OBSERVATIONS" : "LOCAL OBSERVATIONS";
-  $("notice").className = `notice ${failed ? "warning" : sample ? "sample" : ""}`;
-  $("notice").textContent = failed ? "Dashboard connection lost. Showing the last snapshot; every signal below may be stale." : sample ? "SAMPLE WORKSPACE — Synthetic projects and runs. No live telemetry is being collected." : hub ? "Registered devices only. Transport health and agent activity are separate; project completion remains unknown." : "Local observation only. Project completion remains unknown; agent questions without a lifecycle signal remain unknown.";
-  if (!failed && snapshot.transport) $("notice").textContent += ` Hub forwarding: ${snapshot.transport.status}${snapshot.transport.pending ? " · retry pending" : ""}.`;
-  document.querySelector('.cloud p').textContent = hub ? 'Local imports only' : 'Validated imports only';
-  document.querySelector('.cloud small').textContent = hub ? 'Cloud imports stay on source devices. No live cloud connection.' : 'No live cloud connection. Imported states are dated observations.';
-  const runs = snapshot.projects.flatMap((p) => p.runs).filter((run) => !isPrevious(run));
-  $("project-count").textContent = snapshot.projects.length;
-  $("run-count").textContent = runs.length;
-  $("attention-count").textContent = runs.filter((r) => r.state === "needs-attention" && !isStale(r) && !["absent", "disconnected", "offline"].includes(r.reachability)).length;
-  $("stale-count").textContent = runs.filter(isStale).length;
-  const query = $("search").value.toLowerCase();
-  const filter = $("filter").value;
-  const list = $("projects");
-  const expanded = new Set(Array.from(list.querySelectorAll('details[open]'), node => node.dataset.run));
-  const expandedHistory = new Set(Array.from(list.querySelectorAll('.history[open]'), node => node.dataset.project));
-  list.replaceChildren();
-  const projects = snapshot.projects.filter((p) => `${p.id} ${p.repository}`.toLowerCase().includes(query) && (filter === "all" || p.runs.some((r) => filter === "stale" ? isStale(r) : r.state === filter)));
-  for (const project of projects) {
-    const card = el("article", undefined, "project");
-    const head = el("div", undefined, "project-head");
-    const title = el("div"); title.append(el("h3", project.id), el("p", project.repository, "repo"));
-    const current = project.runs.filter((run) => !isPrevious(run));
-    const previous = project.runs.filter(isPrevious);
-    head.append(title, el("span", `${current.length} current run${current.length === 1 ? "" : "s"}`, "run-count"));
-    card.append(head);
-    if (!project.runs.length) card.append(el("p", "No runs observed. Configure project roots, then start the collector or opt-in hooks.", "empty"));
-    if (!current.length && previous.length) card.append(el("p", "No current runs. Previous observations are kept below.", "empty"));
-    const history = el("details", undefined, "history");
-    history.dataset.project = project.id;
-    history.open = expandedHistory.has(project.id);
-    history.append(el("summary", `Previous runs (${previous.length})`));
-    for (const run of [...current, ...previous]) {
-      const row = el("details", undefined, "run");
-      row.dataset.run = run.id;
-      row.open = expanded.has(run.id);
-      const summary = el("summary");
-      const who = el("div", undefined, "who");
-      who.append(el("span", run.source === "claude" ? "C" : run.source === "codex" ? "◈" : "↗", "avatar"));
-      const name = el("div"); name.append(el("strong", run.source === "cloud-import" ? "Cloud import" : run.source === "tmux" ? "Agent process" : run.source === "claude" ? "Claude Code" : "Codex"), el("small", `${run.machine} · ${run.id.slice(0, 8)}`)); who.append(name);
-      const status = el("div", undefined, "run-status");
-      const stateLabel = run.reachability === "absent" && !["ended", "completed"].includes(run.state) ? "No longer present" : labels[run.state] || "Unknown";
-      status.append(el("span", stateLabel, `badge ${isPrevious(run) ? "previous" : run.state}`), el("small", `${isStale(run) ? "Stale · " : ""}${run.reachability} · ${age(run.state_at)}`));
-      summary.append(who, status); row.append(summary);
-      const detail = el("div", undefined, "run-detail");
-      detail.append(el("p", `Evidence: ${run.evidence}. Last presence/observation ${age(run.last_seen)}; lifecycle state ${age(run.state_at)}. Project completion: unknown.`));
-      const events = el("ol");
-      if (hub) detail.append(el("p", "Compact forwarded snapshot; event history stays on the source device."));
-      for (const event of run.recent_events.slice().reverse()) events.append(el("li", `${event.kind} · ${event.source} · ${age(event.at)}`));
-      if (consoleEnabled && !sample && !hub && !isPrevious(run) && !isStale(run) && run.reachability === "present" && run.source !== "cloud-import") {
-        const link = el("a", "Open pane console", "pane-link");
-        link.href = `/console.html#${new URLSearchParams({project: project.id, run: run.id})}`;
-        detail.append(link);
-      }
-      detail.append(events); row.append(detail); (isPrevious(run) ? history : card).append(row);
-    }
-    if (previous.length) card.append(history);
-    list.append(card);
-  }
-  if (!projects.length) list.append(el("p", snapshot.projects.length ? "No projects match these filters." : "No projects configured. Add an explicit repository identity and local roots to config.local.json.", "empty"));
-  const connections = $("connections"); connections.replaceChildren();
-  for (const c of snapshot.collectors) {
-    const node = el("div", undefined, "connection");
-    node.append(el("span", undefined, `dot ${["connected", "online"].includes(c.status) && !failed ? "" : "muted"}`), el("strong", c.machine), el("p", failed ? "Snapshot unavailable" : `${c.status}${c.collector_status ? " · collector " + c.collector_status : ""}`), el("small", `${c.panes} panes · ${c.unmatched_panes} unassigned / no agent`));
-    if (hub) node.append(el("small", c.checked_at === null ? "No snapshot received" : `Last received ${age(c.checked_at)}`));
-    if (c.omitted_runs) node.append(el("small", `${c.omitted_runs} older runs omitted by snapshot limit`));
-    connections.append(node);
-  }
-  if (!snapshot.collectors.length) connections.append(el("p", "No collector observation yet.", "empty"));
-  $("updated").textContent = `${sample ? "Sample generated" : "Snapshot"} ${age(snapshot.generated_at)}`;
-}
-async function refresh() {
-  if (pending) return;
-  pending = true;
-  $("refresh").disabled = true;
-  $("refresh").textContent = "Refreshing…";
-  $("refresh-status").textContent = "Checking observations…";
-  try {
-    const response = await fetch("/api/snapshot", {cache: "no-store", signal: AbortSignal.timeout(4000)});
-    if (!response.ok) throw new Error("Unavailable");
-    const next = await response.json();
-    if (next.schema_version !== 1 || !Array.isArray(next.projects)) throw new Error("Invalid snapshot");
-    snapshot = next; failed = false; render();
-    $("refresh-status").textContent = `Updated ${new Date().toLocaleTimeString()}. Auto-refresh every 5s.`;
-  } catch {
-    failed = true;
-    $("refresh-status").textContent = "Refresh failed. Last observations may be stale.";
-    if (snapshot) render();
-    else { $("notice").textContent = "Cannot reach the local dashboard. Start the server, then refresh."; $("notice").className = "notice warning"; }
-  } finally { pending = false; $("refresh").disabled = false; $("refresh").textContent = "↻ Refresh"; }
-}
-$("search").addEventListener("input", render);
-$("filter").addEventListener("change", render);
-$("refresh").addEventListener("click", refresh);
-refresh();
-setInterval(refresh, 5000);
 
-fetch("/api/console/status", {cache: "no-store", signal: AbortSignal.timeout(4000)})
-  .then(response => response.ok ? response.json() : null)
-  .then(info => { consoleEnabled = info?.enabled === true; if (consoleEnabled) { document.querySelector("footer span").textContent = "Optional local pane console · explicit control policy"; render(); } })
-  .catch(() => {});
+function inspectorSession(){return sessions.find(s=>s.id===currentId)}
+function selectPane(id){const s=inspectorSession(),p=s?.panes.find(x=>x.id===id);if(!p)return;if(id===currentPane&&!pendingPane)return;pendingPane=id;bridgeRequest++;$('pane-tabs').querySelectorAll('[data-pane]').forEach(b=>{b.classList.toggle('pending',b.dataset.pane===id);b.setAttribute('aria-pressed',String(b.dataset.pane===currentPane))});$('inspector-escape-hint').textContent='Switching pane…';if(frameReady) $('console-frame').contentWindow.postMessage({type:'round08-select-pane',id,requestId:bridgeRequest},location.origin);}
+function inspectorMeta(){const s=inspectorSession();if(!s)return;const p=s.panes.find(x=>x.id===(pendingPane||currentPane))||s.panes[0];$('inspector-title').textContent=s.title;$('inspector-breadcrumb').textContent=`${s.device} / ${s.project}`;$('inspector-activity').innerHTML=observed(s.primary);$('inspector-evidence').textContent=s.primary?.evidence||'No lifecycle evidence; current activity unknown.';$('inspector-workflow').innerHTML=workflows.map(w=>`<option value="${w.id}">${w.label}</option>`).join('');$('inspector-workflow').value=s.lane;$('pane-tabs').innerHTML=s.panes.map(x=>`<button data-pane="${escapeHTML(x.id)}" aria-pressed="${x.id===currentPane}" class="${x.id===pendingPane?'pending':''}">${icon('terminal')}${escapeHTML(x.pane||x.id)}</button>`).join('');const arr=selectedSessions().filter(x=>x.panes.length),at=arr.findIndex(x=>x.id===s.id);$('inspector-position').textContent=`${at+1} / ${arr.length}`;$('inspector-prev').disabled=at<=0;$('inspector-next').disabled=at>=arr.length-1;renderTree();}
+function openInspector(id,paneId){const s=sessions.find(x=>x.id===id);if(!s?.panes.length){toast('This observation has no authorized local terminal detail.');return}if(currentId===id&&$('inspector').open){if(paneId)selectPane(paneId);return}returnFocus=document.activeElement;previewGeneration++;currentId=id;currentPane=null;pendingPane=paneId||s.panes[0].id;frameReady=false;expanded=false;$('inspector').classList.remove('full-window');$('inspector-expand').setAttribute('aria-pressed','false');inspectorMeta();const p=s.panes.find(x=>x.id===(pendingPane||currentPane))||s.panes[0],hash=new URLSearchParams({project:s.project,id:p.id,session:s.sessionId||'',embed:'1'});if(s.primary?.id)hash.set('run',s.primary.id);$('console-frame').src=`/console.html#${hash}`;if(!$('inspector').open)$('inspector').showModal();}
+function closeInspector(){if(!$('inspector').open)return;previewGeneration++;$('inspector').close();$('console-frame').src='about:blank';currentId=null;currentPane=null;pendingPane=null;frameReady=false;expanded=false;$('inspector').classList.remove('full-window');renderTree();returnFocus?.focus?.();}
+function changeInspector(delta){const arr=selectedSessions().filter(x=>x.panes.length),at=arr.findIndex(x=>x.id===currentId);if(arr[at+delta])openInspector(arr[at+delta].id)}
+function setExpanded(next){
+ const dialog=$('inspector');if(next===expanded)return;
+ const child=$('console-frame').contentWindow?.consoleLayout;
+ const liveLayout=child?.captureLayout?.()||null;
+ dialog.classList.toggle('full-window',next);
+ expanded=next;
+ $('inspector-expand').setAttribute('aria-pressed',String(next));
+ $('inspector-expand').querySelector('span').textContent=next?'Restore detail':'Expand to full';
+ if(liveLayout)requestAnimationFrame(()=>child?.restoreLayout?.(liveLayout));
+}
+
+window.addEventListener('message',e=>{if(e.origin!==location.origin||e.source!==$('console-frame').contentWindow||!e.data||typeof e.data!=='object')return;const m=e.data;if(m.type==='round08-ready'){frameReady=true;if(pendingPane){const id=pendingPane;pendingPane=null;selectPane(id);}}else if(m.type==='round08-pane-selected'){if(m.requestId!==bridgeRequest||m.id!==pendingPane)return;currentPane=m.id;pendingPane=null;$('inspector-escape-hint').textContent='Escape to return';inspectorMeta();}else if(m.type==='round08-close')closeInspector();else if(m.type==='round08-layout-state'){$('inspector-escape-hint').textContent=m.ownsEscape?'Editor controls Escape':'Escape to return';}});
+$('inspector').addEventListener('cancel',e=>{const c=$('console-frame').contentWindow?.consoleLayout;if(c?.isComposing?.()||c?.ownsEscape?.()){e.preventDefault();return}e.preventDefault();if(expanded)setExpanded(false);else closeInspector()});
+$('inspector-close').onclick=closeInspector;$('inspector-expand').addEventListener('pointerdown',event=>event.preventDefault());$('inspector-expand').onclick=()=>setExpanded(!expanded);$('inspector-prev').onclick=()=>changeInspector(-1);$('inspector-next').onclick=()=>changeInspector(1);$('pane-tabs').onclick=e=>{const b=e.target.closest('[data-pane]');if(b)selectPane(b.dataset.pane)};$('inspector-workflow').onchange=e=>move(currentId,e.target.value);
+$('tree-toggle').onclick=()=>{document.body.classList.add('tree-open');$('tree-scrim').hidden=false;$('tree-toggle').setAttribute('aria-expanded','true')};function closeTree(){document.body.classList.remove('tree-open');$('tree-scrim').hidden=true;$('tree-toggle').setAttribute('aria-expanded','false')}$('tree-close').onclick=closeTree;$('tree-scrim').onclick=closeTree;
+$('tree').addEventListener('click',e=>{const toggle=e.target.closest('[data-expand]');if(toggle){const id=toggle.dataset.expand;expandedNodes.has(id)?expandedNodes.delete(id):expandedNodes.add(id);renderTree();return}const b=e.target.closest('[data-node]');if(!b)return;const n=window.homeTreeNodes.get(b.dataset.node);if(!n)return;focusedNode=n.id;scope={...n.scope};renderTree();renderCards();if(n.pane)openInspector(n.session.id,n.pane.id);closeTree()});
+$('tree').addEventListener('keydown',e=>{const b=e.target.closest('[data-node]');if(!b)return;const labels=[...$('tree').querySelectorAll('[data-node]')].filter(x=>x.offsetParent!==null),i=labels.indexOf(b),n=window.homeTreeNodes.get(b.dataset.node);let next=null;if(e.key==='ArrowDown')next=labels[i+1];if(e.key==='ArrowUp')next=labels[i-1];if(e.key==='Home')next=labels[0];if(e.key==='End')next=labels.at(-1);if(e.key==='ArrowRight'&&n?.children.length){expandedNodes.add(n.id);renderTree();next=$('tree').querySelector(`[data-node="${CSS.escape(n.children[0].id)}"]`)}if(e.key==='ArrowLeft'&&n){if(expandedNodes.has(n.id)){expandedNodes.delete(n.id);renderTree();next=$('tree').querySelector(`[data-node="${CSS.escape(n.id)}"]`)}else{const parent=[...window.homeTreeNodes.values()].find(x=>x.children.includes(n));if(parent)next=$('tree').querySelector(`[data-node="${CSS.escape(parent.id)}"]`)}}if(next){e.preventDefault();focusedNode=next.dataset.node;$('tree').querySelectorAll('[data-node]').forEach(x=>x.tabIndex=x===next?0:-1);next.focus()}else if(e.key==='Enter'||e.key===' '){e.preventDefault();b.click()}});
+$('all-sessions').onclick=()=>{scope={};renderTree();renderCards();closeTree()};$('home-health').onclick=e=>{const b=e.target.closest('[data-device-scope]');if(b){scope={device:b.dataset.deviceScope};renderTree();renderCards()}};
+$('session-surface').onclick=e=>{const clear=e.target.closest('#clear-filters');if(clear){scope={};query='';activity='all';$('search').value='';$('activity-filter').value='all';renderTree();renderCards();return}const b=e.target.closest('[data-open]');if(b)openInspector(b.dataset.open)};$('session-surface').onchange=e=>{const b=e.target.closest('[data-move]');if(b)move(b.dataset.move,b.value)};
+$('session-surface').addEventListener('dragstart',e=>{const c=e.target.closest('.session-card');if(!c)return;dragId=c.dataset.sessionId;e.dataTransfer.setData('text/plain',dragId);e.dataTransfer.effectAllowed='move';c.classList.add('dragging')});$('session-surface').addEventListener('dragend',()=>{dragId=null;$('session-surface').querySelectorAll('.drop-target,.dragging').forEach(x=>x.classList.remove('drop-target','dragging'))});$('session-surface').addEventListener('dragover',e=>{const lane=e.target.closest('[data-drop]');if(!lane||!dragId)return;e.preventDefault();e.dataTransfer.dropEffect='move';$('session-surface').querySelectorAll('.drop-target').forEach(x=>x.classList.remove('drop-target'));lane.classList.add('drop-target');const scroller=lane.querySelector('.lane-cards'),r=scroller.getBoundingClientRect();if(e.clientY<r.top+35)scroller.scrollTop-=24;else if(e.clientY>r.bottom-35)scroller.scrollTop+=24});$('session-surface').addEventListener('drop',e=>{const lane=e.target.closest('[data-drop]');if(!lane||!dragId)return;e.preventDefault();const id=dragId;dragId=null;move(id,lane.dataset.drop)});
+$('view-gallery').onclick=()=>setView('gallery');$('view-board').onclick=()=>setView('board');function setView(next){view=next;$('view-gallery').setAttribute('aria-pressed',String(next==='gallery'));$('view-board').setAttribute('aria-pressed',String(next==='board'));$('view-description').textContent=next==='gallery'?'Scan previews, then inspect an authorized local session.':'Organize sessions yourself. Drag a card or use its manual workflow menu.';renderCards()}$('gallery-sizes').onclick=e=>{const b=e.target.closest('[data-size]');if(!b)return;size=b.dataset.size;$('gallery-sizes').querySelectorAll('[data-size]').forEach(x=>x.setAttribute('aria-pressed',String(x===b)));renderCards()};$('search').oninput=e=>{query=e.target.value;renderCards()};$('activity-filter').onchange=e=>{activity=e.target.value;renderCards()};$('refresh').onclick=async()=>{await refresh();if(previewsAllowed)await refreshPreviews()};$('authenticate-previews').onclick=authenticatePreviews;
+refresh().then(checkConsole);setInterval(async()=>{await refresh();if(previewsAllowed)await refreshPreviews()},5000);
