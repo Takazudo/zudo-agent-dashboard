@@ -13,7 +13,7 @@
   const editor = window.createComposerEditor($("editor-host"), {change: () => { editRevision++; }, composition: active => { if (!active) setTimeout(settleSelection, 0); }});
   const keys = {enter: "\r", tab: "\t", escape: "\x1b", interrupt: "\x03", up: "\x1b[A", down: "\x1b[B", right: "\x1b[C", left: "\x1b[D"};
   const keyboardKeys = {Enter: "\r", Tab: "\t", Escape: "\x1b", Backspace: "\x7f", Delete: "\x1b[3~", ArrowUp: keys.up, ArrowDown: keys.down, ArrowRight: keys.right, ArrowLeft: keys.left, Home: "\x1b[H", End: "\x1b[F", PageUp: "\x1b[5~", PageDown: "\x1b[6~"};
-  let targets = [], csrf = "", lease = null, deadline = 0, generation = 0, pending = false, controller = null;
+  let targets = [], csrf = "", lease = null, deadline = 0, generation = 0, pending = false, controller = null, sampling = false, sampleController = null;
   let allowed = false, control = false, sequence = 1, queued = "", composing = false, discardComposition = false;
   let mode = "compose", collapsed = true, expanded = false, composerExpanded = false, restoreFocus = null;
   let current = null, pendingSelection = null, session = null, lastPoll = 0, controlIntent = false, selectionSerial = 0, selecting = null, revoking = null;
@@ -41,13 +41,20 @@
     text("console-input-target", lease ? (control ? `Input active · ${label(target())}` : `Viewing · ${label(target())}`) : "Read-only");
     text("editor-target", target() ? `Draft · ${label(target())}` : "No pane selected");
   }
-  function request(action, body, signal) {
+  function request(action, body, signal, mayDispatch = () => true) {
     // Keep bounded requests ordered; aborted work never becomes a later input replay.
-    const next = transportRequests.then(() => transport(action, body, signal));
+    const next = transportRequests.then(() => {
+      if (!mayDispatch()) {
+        const error = new Error("Input canceled before dispatch"); error.canceledBeforeDispatch = true; throw error;
+      }
+      return transport(action, body, signal);
+    });
     transportRequests = next.catch(() => {});
     return next;
   }
   async function transport(action, body, signal) {
+    // A queued operation must not reach fetch after a read invalidates its lease.
+    if (signal?.aborted) throw new DOMException("Operation canceled", "AbortError");
     const response = await fetch(`/api/console/${action}`, {method: "POST", cache: "no-store", credentials: "same-origin", signal,
       headers: {"Content-Type": "application/json", "X-Console-CSRF": csrf}, body: JSON.stringify(body)});
     if (!response.ok) { const error = new Error(`Console ${action}: ${response.status}`); error.status = response.status; throw error; }
@@ -64,7 +71,7 @@
   function reset(message, wipe = true, invalidateSelection = true) {
     const old = lease;
     if (invalidateSelection) { selectionSerial++; selecting = null; }
-    generation++; controller?.abort(); controller = null; lease = null; deadline = 0; pending = false;
+    generation++; controller?.abort(); controller = null; sampleController?.abort(); sampleController = null; sampling = false; lease = null; deadline = 0; pending = false;
     control = false; controlIntent = false; queued = ""; cancelComposition(); frame = null; latestFrame = null; following = true; uncertain = false; held = false;
     if (wipe) {
       editor.reset(); keyboard.value = ""; pendingSelection = null;
@@ -130,7 +137,7 @@
     const same = current?.id === t.id;
     if (!same) {
       const old = lease;
-      generation++; controller?.abort(); controller = null; lease = null; pending = false; queued = ""; control = false;
+      generation++; controller?.abort(); controller = null; sampleController?.abort(); sampleController = null; sampling = false; lease = null; pending = false; queued = ""; control = false;
       if (old) await closeLease(old);
       if (choice !== selectionSerial) return;
       current = t; session = t.session_id; setPicker(t);
@@ -186,7 +193,11 @@
     let result;
     try { result = await request("screen", {lease}, signal); }
     catch (error) {
-      if (error.status !== 429) throw error;
+      if (error.status !== 429) {
+        // Invalidate before the transport queue can dispatch a waiting input operation.
+        if (epoch === generation && target() === forTarget) void reset("Disconnected: capture unavailable or target changed. Reconnect manually; no input replay.");
+        throw error;
+      }
       if (epoch === generation && target() === forTarget) text("console-sampled", "Capture temporarily busy · waiting for the next sample");
       return;
     }
@@ -213,27 +224,44 @@
     } catch { if (epoch === generation) reset("Connection unavailable or target changed. Reconnect manually."); }
     finally { clearTimeout(timeout); if (epoch === generation) { pending = false; controller = null; buttons(); } }
   }
+  async function sample() {
+    if (!lease || sampling || pending || selecting !== null) return;
+    const epoch = generation, t = target(), active = new AbortController();
+    sampling = true; sampleController = active;
+    const timeout = setTimeout(() => active.abort(), 10000);
+    try { await screen(epoch, active.signal, t); }
+    catch { if (epoch === generation) void reset("Capture unavailable. Reconnect manually; no input replay."); }
+    finally {
+      clearTimeout(timeout);
+      if (epoch === generation) { sampling = false; sampleController = null; }
+    }
+  }
   async function operate(action, extra = {}) {
+    if (action === "screen") return sample();
     if (!lease || pending || selecting !== null || (action === "control" && extra.enabled && revoking?.lease === lease)) return;
     const epoch = generation, t = target(), thisLease = lease;
     pending = true; buttons();
     const active = new AbortController(); controller = active;
     const timeout = setTimeout(() => active.abort(), 10000);
     try {
-      if (action === "screen") await screen(epoch, active.signal, t);
-      else {
-        const body = {lease: thisLease, ...extra};
-        if (action === "send" || action === "resize") body.sequence = sequence;
-        const result = await request(action, body, active.signal);
-        if (epoch !== generation || t !== target()) return;
-        if (action === "control") {
-          control = result.control && controlIntent;
-          if (result.control && !controlIntent) void controlOff(thisLease, epoch);
-          text("console-delivery", control ? `Input active for ${label(t)}` : "Read-only. Draft retained.");
-          status(control ? `Input active · ${label(t)}` : "Connected read-only.");
-        } else { sequence = result.sequence; text("console-delivery", "Sent to pane. This acknowledges delivery, not command success."); }
+      const body = {lease: thisLease, ...extra};
+      if (action === "send" || action === "resize") body.sequence = sequence;
+      const result = await request(action, body, active.signal, () =>
+        epoch === generation && thisLease === lease && t === target() && controlIntent &&
+        (action === "control" || control));
+      if (epoch !== generation || t !== target()) return;
+      if (action === "control") {
+        control = result.control && controlIntent;
+        if (result.control && !controlIntent) void controlOff(thisLease, epoch);
+        text("console-delivery", control ? `Input active for ${label(t)}` : "Read-only. Draft retained.");
+        status(control ? `Input active · ${label(t)}` : "Connected read-only.");
+      } else { sequence = result.sequence; text("console-delivery", "Sent to pane. This acknowledges delivery, not command success."); }
+    } catch (error) {
+      if (epoch === generation) {
+        if (error.canceledBeforeDispatch) text("console-delivery", "Input canceled before dispatch. Nothing queued for replay.");
+        else reset("Disconnected or target changed. Delivery may be uncertain; inspect before sending again. No input replay.");
       }
-    } catch { if (epoch === generation) reset("Disconnected or target changed. Delivery may be uncertain; inspect before sending again. No input replay."); }
+    }
     finally {
       clearTimeout(timeout);
       if (epoch === generation) { pending = false; controller = null; buttons(); pump(); }
@@ -400,7 +428,7 @@
     const seconds = Math.ceil((deadline - Date.now()) / 1000);
     if (seconds <= 0) { reset("Lease expired. Drafts cleared; reconnect manually."); return; }
     text("console-expiry", `Lease expires in ${seconds}s. Refresh does not extend it.`);
-    if (!pending && !queued && Date.now() - lastPoll >= 500) { lastPoll = Date.now(); void operate("screen"); }
+    if (!pending && !sampling && !queued && Date.now() - lastPoll >= 500) { lastPoll = Date.now(); void operate("screen"); }
   }, 100);
   (async () => {
     if (location.search) { status("Query selection is unsupported. Use a dashboard link."); return; }

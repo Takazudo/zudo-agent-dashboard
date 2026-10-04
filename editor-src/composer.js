@@ -30,7 +30,7 @@ window.createComposerEditor=(host,callbacks={})=>{
   get selectionEnd(){return view.state.selection.main.to},
   get selectionDirection(){return view.state.selection.main.anchor>view.state.selection.main.head?'backward':'forward'},
   setSelectionRange(start,end,direction){if(destroyed)return;const max=view.state.doc.length;const a=Math.max(0,Math.min(max,start)),b=Math.max(0,Math.min(max,end));view.dispatch({selection:{anchor:direction==='backward'?b:a,head:direction==='backward'?a:b}})},
-  setEnabled(next){if(destroyed)return;enabled=Boolean(next);view.dispatch({effects:editable.reconfigure([EditorState.readOnly.of(!enabled),EditorView.editable.of(enabled)])})},
+  setEnabled(next){if(destroyed||enabled===Boolean(next))return;enabled=Boolean(next);view.dispatch({effects:editable.reconfigure([EditorState.readOnly.of(!enabled),EditorView.editable.of(enabled)])})},
   focus(){if(!destroyed&&enabled)view.focus()},
   hasFocus:()=>!destroyed&&view.hasFocus,
   get composing(){return !destroyed&&view.composing},

@@ -24,6 +24,12 @@ with tempfile.TemporaryDirectory(prefix="zudo-browser-fixture-") as directory:
     command = ["tmux", "-L", socket, "-f", "/dev/null"]
     config = dict(machine="fixture", tmux_socket=socket, stale_after=120,
                   projects={"example": dict(id="example", repository="github.com/example/fixture", roots=[directory])})
+    if "--slow-previews" in sys.argv:
+        original_preview = PaneBackend.preview
+        def slow_preview(self, target):
+            time.sleep(1.2)  # Hold only this disposable fixture's console read lock.
+            return original_preview(self, target)
+        PaneBackend.preview = slow_preview
     policy = dict(identity="fixture", password_sha256=hashlib.sha256(b"public-fixture-password").hexdigest(), projects=["example"], allow_input=True)
     db = Path(directory) / "fixture.sqlite"
     scripts = {}
@@ -34,6 +40,12 @@ with tempfile.TemporaryDirectory(prefix="zudo-browser-fixture-") as directory:
             "ctypes.CDLL(None).prctl(15,b'codex',0,0,0)\n"
             f"print('\\n'.join(f'HISTORY-{name}-{{i:04d}}' for i in range(620)), flush=True)\n"
             "print('SYNTHETIC SCREEN ONLY 日本語 <img src=x onerror=alert(1)>',flush=True)\n"
+            + ("import threading,time\n"
+             "def tick():\n"
+             "    for i in range(600):\n"
+             "        time.sleep(.7)\n"
+             "        print('FIXTURE TICK',i,flush=True)\n"
+             "threading.Thread(target=tick,daemon=True).start()\n" if "--stream-output" in sys.argv else "") +
             "input()\n"
         )
         scripts[name] = script

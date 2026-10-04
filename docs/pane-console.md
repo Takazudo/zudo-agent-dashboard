@@ -197,3 +197,16 @@ It also runs the original dashboard regressions. Linux and tmux are required for
 the console browser fixture; `CHROMIUM_PATH` can select an installed Chromium.
 Native macOS metadata and common console tests run in macOS CI; the real PTY
 fixture is Linux-only. No real-user terminal testing was performed.
+
+Background detail samples do not disable or reconfigure foreground controls.
+Refresh joins an already pending sample. Explicit control/send/resize operations
+remain ordered behind any active read; a denied/failed read invalidates its lease
+and cancels waiting operations before dispatch. Busy (429) sampling retains the
+same lease and resumes on the next poll. Expiry and reconnection remain explicit.
+
+Opening detail cancels the remaining overview capture batch and waits for its
+current reader to finish before loading the iframe. Closing or retargeting during
+that handoff cannot revive a delayed iframe. Native direct/proxy regressions keep
+the inspector open across five real overview cycles with changing fixture output,
+assert zero background disabled-state pulses on Terminal input/Refresh, preserve
+focus/selection/scroll, and verify denial clears output without automatic input.
