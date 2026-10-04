@@ -11,6 +11,7 @@ from zipfile import ZipFile
 REQUIRED = {
     "zudo_agent/web/index.html",
     "zudo_agent/web/app.js",
+    "zudo_agent/web/commands.js",
     "zudo_agent/web/console.html",
     "zudo_agent/web/console.js",
     "zudo_agent/web/preferences.js",

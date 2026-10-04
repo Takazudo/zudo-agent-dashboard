@@ -13,6 +13,7 @@ REQUIRED = {
     "package.json",
     "package-lock.json",
     "zudo_agent/web/editor.js",
+    "zudo_agent/web/commands.js",
     "zudo_agent/web/THIRD_PARTY_NOTICES.txt",
 }
 

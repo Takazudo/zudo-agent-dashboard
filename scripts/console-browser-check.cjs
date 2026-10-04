@@ -52,7 +52,7 @@ const assert = require('node:assert/strict');
     await page.goto(base + '/');
     await page.locator('#authenticate-previews').waitFor({state: 'visible'});
     assert.equal(await page.locator('#project-overview #project-history').count(), 1);
-    assert.match(await page.locator('#project-overview').innerText(), /Project health and run history/);
+    assert.match(await page.locator('#project-overview').textContent(), /Project health and run history/);
     assert.equal(await page.locator('#project-history').count(), 1);
     assert.equal(calls.slice(begin).some(call => call.path === '/api/console/open'), false, 'home observation never connects a pane');
     assert.equal(await page.locator('.session-card .capture').filter({hasText: /Authenticate previews|Capture unavailable/}).count() > 0, true);
@@ -61,6 +61,7 @@ const assert = require('node:assert/strict');
     const homeCards = page.locator('.session-card');
     assert.ok(await homeCards.count() >= 2, 'same-session panes group into one session card');
     const sharedCard = homeCards.filter({hasText: '2 panes'}).first();
+    await page.waitForLoadState('networkidle'); // Finish the bounded preview batch before opening another reader.
     await sharedCard.locator('.card-preview').click();
     const embedded = page.frameLocator('#console-frame');
     await embedded.locator('#console-screen').waitFor();
@@ -89,6 +90,37 @@ const assert = require('node:assert/strict');
     await embedded.locator('#console-toggle').click();
     await embedded.locator('#console-send').waitFor({state: 'visible'});
     await page.waitForFunction(() => document.querySelector('#console-frame')?.contentDocument?.querySelector('#console-send')?.disabled === false);
+    // Commands layer over the existing isolated fixture iframe, preserving its
+    // unsent draft and control state without any terminal mutation request.
+    const commandModifier = await page.evaluate(() => /Mac|iPhone|iPad/.test(navigator.platform) ? 'Meta' : 'Control');
+    const embeddedComposer = embedded.locator('.cm-content[contenteditable="true"]');
+    await embeddedComposer.fill('UNSENT COMMAND FIXTURE');
+    await embeddedComposer.press(`${commandModifier}+k`);
+    assert.equal(await page.locator('#command-palette').isVisible(), false, 'Compose owns its shortcuts');
+    await embeddedComposer.fill('UNSENT COMMAND FIXTURE');
+    await page.evaluate(() => { window.__round09Frame = document.querySelector('#console-frame').contentWindow; });
+    const beforeCommands = calls.length, beforeCommandSends = sendTexts.length;
+    await page.locator('#inspector-commands').click();
+    await page.locator('#command-search').fill('focus session');
+    assert.equal(await page.locator('#command-results [data-command-id="search"]').isDisabled(), true, 'background navigation is disabled inside inspector');
+    await page.keyboard.press('Escape');
+    assert.equal(await page.evaluate(() => document.activeElement.id), 'inspector-commands');
+    await page.locator('#inspector-help').click();
+    await page.keyboard.press('Tab');
+    assert.equal(await page.locator('#command-help [data-close]').evaluate(el => el === document.activeElement), true);
+    await page.keyboard.press('Escape');
+    for (let iteration = 0; iteration < 2; iteration++) {
+      await page.locator('#inspector-commands').click();
+      await page.locator('#command-search').fill('detail expansion');
+      await page.keyboard.press('Enter');
+    }
+    assert.equal(await page.evaluate(() => document.querySelector('#console-frame').contentWindow === window.__round09Frame), true, 'commands preserve iframe identity');
+    assert.equal(await page.evaluate(() => document.querySelector('#console-frame').contentWindow.composerEditor.value), 'UNSENT COMMAND FIXTURE');
+    await page.waitForFunction(() => document.querySelector('#console-frame').contentDocument.querySelector('#console-send').disabled === false);
+    assert.equal(await embedded.locator('#console-send').isDisabled(), false, 'command dialogs preserve explicit fixture input state');
+    assert.equal(calls.slice(beforeCommands).some(call => ['/api/console/send', '/api/console/resize'].includes(call.path) || (call.path === '/api/console/control' && call.body?.enabled === true)), false, 'commands never send, resize or enable terminal control');
+    assert.equal(sendTexts.length, beforeCommandSends);
+    await embeddedComposer.fill('');
     const embeddedMetrics = await embedded.locator('.console-app').evaluate(app => {
       app.scrollTop = app.scrollHeight;
       const footer = app.querySelector('.console-foot').getBoundingClientRect();
@@ -123,6 +155,8 @@ const assert = require('node:assert/strict');
     // Direct standalone mode selects the first authorized pane but still waits
     // for the explicit Connect action before reading any output.
     begin = calls.length;
+    await page.goto('about:blank');
+    await page.waitForLoadState('networkidle'); // Drain the previous dashboard phase before a new standalone client.
     await page.goto(base + '/console.html#project=example&id=' + panes[0]);
     await page.waitForFunction(() => document.querySelector('#console-status')?.textContent.includes('Connect explicitly'));
     assert.equal(await page.locator('#console-connect').isEnabled(), true);
@@ -424,6 +458,7 @@ const assert = require('node:assert/strict');
     })).catch(() => null));
     throw error;
   } finally {
+    if (page && !page.isClosed()) await page.unrouteAll({behavior: 'ignoreErrors'});
     if (browser) await browser.close();
     server.kill('SIGTERM');
   }

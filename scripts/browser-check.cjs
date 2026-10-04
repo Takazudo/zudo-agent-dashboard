@@ -25,15 +25,71 @@ function startSample() {
     const context = await browser.newContext({viewport: {width: 1440, height: 1000}});
     const page = await context.newPage();
     const errors = [], cspErrors = [];
+    let commandsAsset = null;
     page.on('pageerror', error => errors.push(error.message));
     page.on('console', message => { if (message.type() === 'error' && /content security policy|refused to apply/i.test(message.text())) cspErrors.push(message.text()); });
+    page.on('response', response => { if (new URL(response.url()).pathname === '/commands.js') commandsAsset = response; });
     await page.goto(base);
     await page.waitForSelector('.session-card');
+    await page.waitForFunction(() => typeof window.DashboardCommands?.registry === 'function');
+    assert.equal(await commandsAsset?.status(), 200, 'local server serves the command registry asset');
+    assert.match(commandsAsset.headers()['content-type'], /javascript/);
+    assert.match(await commandsAsset.text(), /DashboardCommands/);
     assert.equal(await page.title(), 'zudo-agent-dashboard');
     assert.equal((await page.locator('h1').innerText()).replace(/\s+/g, ' '), 'Session library 5');
+    assert.equal(await page.locator('#sidebar').evaluate(el => el.inert), true, 'Explorer starts collapsed and inert');
+    assert.equal(await page.locator('#overview-panel').evaluate(el => el.inert), true, 'overview starts collapsed and inert');
+    assert.equal(await page.locator('#tree-toggle').getAttribute('aria-expanded'), 'false');
+    assert.equal(await page.locator('#overview-toggle').getAttribute('aria-expanded'), 'false');
+    assert.equal(await page.locator('#view-board').getAttribute('aria-pressed'), 'true', 'fresh profiles start in Kanban view');
+    await page.locator('#tree-toggle').click();
+    assert.equal(await page.locator('#sidebar').evaluate(el => el.inert), false);
+    assert.equal(await page.locator('#overview-panel').evaluate(el => el.inert), true, 'Explorer opens independently of overview');
+    await page.locator('#tree-toggle').click();
+    await page.locator('#overview-toggle').click();
+    assert.equal(await page.locator('#sidebar').evaluate(el => el.inert), true);
+    assert.equal(await page.locator('#overview-panel').evaluate(el => el.inert), false, 'overview opens independently of Explorer');
+    await page.locator('#overview-toggle').click();
+    await page.reload();
+    await page.waitForSelector('.session-card');
+    assert.equal(await page.locator('#sidebar').evaluate(el => el.inert), true, 'collapsed Explorer survives reload');
+    assert.equal(await page.locator('#overview-panel').evaluate(el => el.inert), true, 'collapsed overview survives reload');
+    await page.locator('#tree-toggle').click();
+    await page.reload();
+    await page.waitForSelector('.session-card');
+    assert.equal(await page.locator('#tree-toggle').getAttribute('aria-expanded'), 'true', 'explicitly opened Explorer survives reload');
+    assert.equal(await page.locator('#overview-toggle').getAttribute('aria-expanded'), 'false');
+    await page.locator('#tree-toggle').click();
+    await page.locator('#overview-toggle').click();
+    await page.reload();
+    await page.waitForSelector('.session-card');
+    assert.equal(await page.locator('#tree-toggle').getAttribute('aria-expanded'), 'false');
+    assert.equal(await page.locator('#overview-toggle').getAttribute('aria-expanded'), 'true', 'overview state persists independently');
+    await page.locator('#overview-toggle').click();
     assert.match(await page.locator('#notice').innerText(), /Sample observations are synthetic/);
     assert.match(await page.locator('.session-card').first().innerText(), /Capture unavailable|Authenticate previews/);
     assert.equal(await page.locator('#authenticate-previews').isVisible(), false, 'sample data cannot authenticate a live preview');
+
+    const storageContext = await browser.newContext({viewport: {width: 1440, height: 1000}});
+    const malformedPage = await storageContext.newPage();
+    await malformedPage.addInitScript(() => localStorage.setItem('zudo-agent-dashboard-workspace-v1', '{broken'));
+    await malformedPage.goto(base);
+    await malformedPage.waitForSelector('.session-card');
+    assert.equal(await malformedPage.locator('#sidebar').evaluate(el => el.inert), true, 'malformed workspace storage falls back to collapsed defaults');
+    assert.equal(await malformedPage.locator('#overview-panel').evaluate(el => el.inert), true);
+    assert.equal(await malformedPage.locator('#view-board').getAttribute('aria-pressed'), 'true');
+    const blockedPage = await storageContext.newPage();
+    const blockedErrors = [];
+    blockedPage.on('pageerror', error => blockedErrors.push(error.message));
+    await blockedPage.addInitScript(() => Object.defineProperty(window, 'localStorage', {configurable: true, get() { throw new DOMException('blocked', 'SecurityError'); }}));
+    await blockedPage.goto(base);
+    await blockedPage.waitForSelector('.session-card');
+    await blockedPage.locator('#tree-toggle').click();
+    await blockedPage.locator('#overview-toggle').click();
+    assert.equal(await blockedPage.locator('#tree-toggle').getAttribute('aria-expanded'), 'true', 'blocked storage does not prevent opening Explorer');
+    assert.equal(await blockedPage.locator('#overview-toggle').getAttribute('aria-expanded'), 'true', 'blocked storage does not prevent opening overview');
+    assert.deepEqual(blockedErrors, []);
+    await storageContext.close();
 
     // Real browser settings are transactional and remain available without a terminal.
     await page.emulateMedia({colorScheme: 'light'});
@@ -55,6 +111,15 @@ function startSample() {
     await page.waitForFunction(() => document.documentElement.dataset.colorMode === 'dark');
     await page.emulateMedia({colorScheme: 'light'});
     await page.waitForFunction(() => document.documentElement.dataset.colorMode === 'light');
+    const savedPreferences = await page.evaluate(() => ({
+      workspace: JSON.parse(localStorage.getItem('zudo-agent-dashboard-workspace-v1')),
+      settings: JSON.parse(localStorage.getItem('zudo-agent-dashboard-settings-v1'))
+    }));
+    assert.equal(Object.hasOwn(savedPreferences.workspace, 'theme'), false, 'layout preferences have a separate storage key');
+    assert.equal(Object.hasOwn(savedPreferences.settings, 'overview'), false, 'appearance preferences remain separate from layout');
+
+    await page.locator('#tree-toggle').click();
+    assert.equal(await page.locator('#tree-toggle').getAttribute('aria-expanded'), 'true');
     const device = page.locator('[data-node^="device:"]').first();
     const deviceId = await device.getAttribute('data-node');
     await page.locator('[data-expand]').first().click();
@@ -68,6 +133,10 @@ function startSample() {
     assert.equal(await page.evaluate(() => document.activeElement.dataset.node), await page.locator('[data-node]:visible').last().getAttribute('data-node'));
     await page.keyboard.press('Home');
     assert.equal(await page.evaluate(() => document.activeElement.dataset.node), deviceId);
+    await page.locator('#tree-toggle').click();
+    assert.equal(await page.locator('#sidebar').evaluate(el => el.inert), true, 'closing Explorer removes its controls from keyboard focus');
+    await page.locator('#overview-toggle').click();
+    assert.equal(await page.locator('#overview-panel').evaluate(el => el.inert), false, 'overview controls are available after opening the panel');
     const heights = [];
     for (const size of ['s', 'm', 'l']) {
       await page.locator(`[data-size="${size}"]`).click();
@@ -83,6 +152,8 @@ function startSample() {
     await page.locator('#activity-filter').selectOption('all');
     await page.locator('#view-board').click();
     assert.equal(await page.locator('.board-lane').count(), 4);
+    await page.locator('#overview-toggle').click();
+    assert.equal(await page.locator('#overview-panel').evaluate(el => el.inert), true);
     assert.equal(await page.locator('#project-overview #project-history').count(), 1, 'project overview contains the history region');
     assert.equal(await page.locator('#project-overview').getAttribute('open'), null);
     mkdirSync('test-results', {recursive: true});
@@ -122,6 +193,7 @@ function startSample() {
     assert.equal(await page.locator('.session-card').count(), 3, 'ended and absent observations stay in project history');
     assert.match(await page.locator('.session-card').allInnerTexts().then(text => text.join('\n')), /Unknown|Waiting for input|Task completed/);
     assert.match(await page.locator('#refresh-status').innerText(), /Updated/);
+    await page.locator('#overview-toggle').click();
     await page.locator('#project-overview > summary').click();
     assert.equal(await page.locator('#project-overview').getAttribute('open'), '');
     assert.match(await page.locator('#project-history').innerText(), /Previous runs \(2\)/);
@@ -234,7 +306,7 @@ function startSample() {
     assert.deepEqual(boardErrors, []);
     await browser.close();
     browser = null;
-    console.log('Dashboard browser QA passed: sample filters, gallery/board, project health/history, stale failure state, hub limitations, safe text, long-label 28-card lane scrolling, scrolled move retention and desktop/mobile/short viewport bounds.');
+    console.log('Dashboard browser QA passed: collapsed Explorer/overview defaults and reopen controls, local command asset, sample filters, gallery/board, project health/history, stale failure state, hub limitations, safe text, long-label 28-card lane scrolling, scrolled move retention and desktop/mobile/short viewport bounds.');
   } finally {
     if (browser) await browser.close();
     server.kill('SIGTERM');
