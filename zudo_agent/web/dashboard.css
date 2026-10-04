@@ -52,3 +52,5 @@
 @media(max-width:1250px){.session-surface[data-thumbnail-size="l"]{--board-preview-h:250px}}
 @media(max-width:900px){.session-surface[data-thumbnail-size="m"]{--board-preview-h:139px}.session-surface[data-thumbnail-size="l"]{--board-preview-h:240px}}
 @media(max-width:650px){.session-surface[data-thumbnail-size="m"]{--board-preview-h:175px}.session-surface[data-thumbnail-size="l"]{--board-preview-h:260px}}
+
+.card-open-cue.capture-notice{opacity:1;transform:none}

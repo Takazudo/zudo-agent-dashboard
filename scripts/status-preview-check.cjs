@@ -8,7 +8,7 @@ w.matchMedia=()=>({matches:false,addEventListener(){}});
 w.AbortSignal.timeout=()=>undefined;
 w.setInterval=()=>1;
 w.eval(fs.readFileSync('zudo_agent/web/preferences.js','utf8'));
-w.eval(fs.readFileSync('zudo_agent/web/app.js','utf8').replace(/refresh\(\)\.then\(checkConsole\);setInterval[^\n]+/,'')+';window.testEval=code=>eval(code);');
+w.eval(fs.readFileSync('zudo_agent/web/app.js','utf8').replace(/refreshCycle\(\)\.then\(checkConsole\);setInterval[^\n]+/,'')+';window.testEval=code=>eval(code);');
 const evaluate=code=>w.testEval(code);
 const text=()=>w.document.querySelector('#session-surface').textContent;
 (async()=>{
