@@ -1,6 +1,7 @@
 """Loopback observation UI with a separately authorized, opt-in pane console."""
 
 import json
+import secrets
 import sqlite3
 import subprocess
 import threading
@@ -19,7 +20,10 @@ def make_server(config, db_path, port=8765, sample=False, console_policy=None):
         raise ValueError("Sample mode cannot enable a real console")
     from .console import Console, ConsoleError
     from .hub import strict_json, BoundedServer
+    from .hub import exact
+    from .workflow import Workflow, known_runs, run_id, LANES
     console = Console(config, console_policy) if console_policy else None
+    workflow = Workflow()
 
     class Handler(BaseHTTPRequestHandler):
         def setup(self):
@@ -57,16 +61,17 @@ def make_server(config, db_path, port=8765, sample=False, console_policy=None):
             if not self.host_ok() or self.headers.get("Upgrade"):
                 self.reply(403, dict(error="Invalid host or upgrade"))
                 return
-            if not self.path.startswith("/api/console/"):
+            is_workflow = self.path in {"/api/workflow", "/api/console/workflow"}
+            if not is_workflow and not self.path.startswith("/api/console/"):
                 self.reply(501 if console is None else 404, dict(error="Unknown operation"))
                 return
-            if not self.console_auth():
+            if self.path.startswith("/api/console/") and not self.console_auth():
                 return
             origin = f"http://{self.headers['Host']}"
             if (self.headers.get_all("Origin", []) != [origin] or
-                    self.headers.get_all("X-Console-CSRF", []) != [console.csrf] or
+                    self.headers.get_all("X-Workflow-CSRF" if is_workflow else "X-Console-CSRF", []) != [workflow.csrf if is_workflow else console.csrf] or
                     self.headers.get_all("Content-Type", []) != ["application/json"] or
-                    self.headers.get("Transfer-Encoding") or
+                    self.headers.get_all("Transfer-Encoding") is not None or
                     len(self.headers.get_all("Content-Length", [])) != 1):
                 self.reply(403, dict(error="Invalid request origin or CSRF proof"))
                 return
@@ -75,25 +80,96 @@ def make_server(config, db_path, port=8765, sample=False, console_policy=None):
                 if not 0 < length <= 32768:
                     raise ValueError()
                 body = strict_json(self.rfile.read(length))
-                self.reply(200, console.handle(self.path.removeprefix("/api/console/"), body))
+                if is_workflow:
+                    exact(body, {"id", "lane", "revision"})
+                    store = None if sample else Store(db_path, config)
+                    try:
+                        snapshot = sample_snapshot() if sample else store.snapshot()
+                        ids = known_runs(snapshot, current=True)
+                        if console and console.authorized(self.headers):
+                            try:
+                                targets = console.handle("targets", {})["targets"]
+                            except (ConsoleError, OSError, subprocess.SubprocessError):
+                                targets = []
+                            for target in targets:
+                                ids[target["workflow_id"]] = target
+                        if body["id"] not in ids:
+                            self.reply(409, dict(error="Workflow target no longer current"))
+                            return
+                        if store and store.workflow_canonical(body["id"]) != body["id"]:
+                            if not (console and console.authorized(self.headers)):
+                                self.reply(403, dict(error="Session metadata requires console authentication"))
+                                return
+                            if store.workflow_canonical(body["id"]) not in ids:
+                                self.reply(409, dict(error="Session no longer current"))
+                                return
+                        updated, current = workflow.move(store, body["id"], body["lane"], body["revision"])
+                        self.reply(409 if current else 200, dict(id=body["id"], **(current or updated)))
+                    finally:
+                        if store: store.close()
+                else:
+                    self.reply(200, console.handle(self.path.removeprefix("/api/console/"), body))
             except ConsoleError as exc:
                 self.reply(exc.status, dict(error=exc.message))
             except (ValueError, KeyError, TypeError, UnicodeError, RecursionError):
                 self.reply(400, dict(error="Invalid console request"))
             except (OSError, subprocess.SubprocessError):
                 self.reply(503, dict(error="Console unavailable; reconnect explicitly"))
+            except sqlite3.OperationalError:
+                self.reply(503, dict(error="Workflow temporarily unavailable"))
 
         def do_GET(self):
             if not self.host_ok() or self.headers.get("Upgrade"):
                 self.send_error(403)
                 return
-            route = self.path.split("?", 1)[0]
+            route = self.path
             if route == "/api/console/status":
                 self.reply(200, dict(enabled=console is not None))
                 return
             if route == "/api/console/bootstrap":
                 if self.console_auth():
                     self.reply(200, dict(csrf=console.csrf, identity=console.policy["identity"], allow_input=console.policy["allow_input"]))
+                return
+            if route in {"/api/workflow", "/api/console/workflow"}:
+                if route == "/api/console/workflow" and not self.console_auth():
+                    return
+                store = None
+                try:
+                    if not sample:
+                        store = Store(db_path, config)
+                    snapshot = sample_snapshot() if sample else store.snapshot()
+                    ids = known_runs(snapshot)
+                    sessions = []
+                    authenticated = bool(console and console.authorized(self.headers))
+                    if authenticated:
+                        groups = {}
+                        try:
+                            targets = console.handle("targets", {})["targets"]
+                        except (ConsoleError, OSError, subprocess.SubprocessError):
+                            targets = []
+                        for target in targets:
+                            group = groups.setdefault(target["workflow_id"], dict(id=target["workflow_id"],
+                                session_id=target["session_id"], project=target["project"], machine=target["machine"],
+                                panes=[], runs=[]))
+                            group["panes"].append(target["id"])
+                            if target["run"] and target["run"] not in group["runs"]:
+                                group["runs"].append(target["run"])
+                        sessions = list(groups.values())
+                        for group in sessions:
+                            ids[group["id"]] = group
+                            if store:
+                                aliases = [run_id(group["project"], group["machine"], run) for run in group["runs"]]
+                                store.workflow_reconcile(group["id"], aliases)
+                    run_keys = [dict(id=key, canonical=store.workflow_canonical(key) if store and authenticated else key, **item)
+                                for key, item in known_runs(snapshot).items()]
+                    if authenticated:
+                        ids.update({item["canonical"]: item for item in run_keys})
+                    self.reply(200, dict(csrf=workflow.csrf, lanes=list(LANES),
+                        items=workflow.state(store, ids), run_keys=run_keys, sessions=sessions))
+                except sqlite3.OperationalError:
+                    self.reply(503, dict(error="Workflow temporarily unavailable"))
+                finally:
+                    if store: store.close()
                 return
             if route == "/console.html" and not self.console_auth():
                 return
@@ -113,19 +189,25 @@ def make_server(config, db_path, port=8765, sample=False, console_policy=None):
                             store.close()
                 body = json.dumps(data).encode()
                 mime = "application/json"
-            elif route in {"/", "/app.js", "/style.css", "/console.html", "/console.js"}:
+            elif route in {"/", "/app.js", "/style.css", "/console.html", "/console.js", "/preferences.js",
+                           "/tokens.css", "/dashboard.css", "/detail.css", "/editor.js", "/THIRD_PARTY_NOTICES.txt", "/favicon.svg"}:
                 name = "index.html" if route == "/" else route[1:]
                 body = (assets / name).read_bytes()
-                mime = "text/javascript" if name.endswith(".js") else "text/css" if name.endswith(".css") else "text/html"
+                if name.endswith(".html"):
+                    body = body.replace(b"<head>", b'<head><meta name="csp-nonce" content="__ZUDO_NONCE__">', 1)
+                mime = "text/javascript" if name.endswith(".js") else "text/css" if name.endswith(".css") else "image/svg+xml" if name.endswith(".svg") else "text/plain" if name.endswith(".txt") else "text/html"
             else:
                 self.send_error(404)
                 return
+            nonce = secrets.token_urlsafe(24)
+            if mime == "text/html":
+                body = body.replace(b"__ZUDO_NONCE__", nonce.encode())
             self.send_response(200)
             self.send_header("Content-Type", mime + "; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
             self.send_header("X-Content-Type-Options", "nosniff")
-            self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
+            self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'nonce-" + nonce + "'; connect-src 'self'; frame-src 'self'; frame-ancestors " + ("'self'" if route == "/console.html" else "'none'") + "; base-uri 'none'; form-action 'none'")
             self.end_headers()
             self.wfile.write(body)
 

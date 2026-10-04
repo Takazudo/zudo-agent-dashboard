@@ -38,6 +38,11 @@ class Store:
           CREATE TABLE IF NOT EXISTS collectors (
             machine TEXT PRIMARY KEY, checked REAL, connected INTEGER, panes INTEGER,
             unmatched INTEGER);
+          CREATE TABLE IF NOT EXISTS workflow (
+            id TEXT PRIMARY KEY, lane TEXT NOT NULL, revision INTEGER NOT NULL,
+            edited REAL NOT NULL);
+          CREATE TABLE IF NOT EXISTS workflow_alias (
+            alias TEXT PRIMARY KEY, canonical TEXT NOT NULL);
             """)
         except sqlite3.Error:
             self.db.close()
@@ -45,6 +50,50 @@ class Store:
 
     def close(self):
         self.db.close()
+
+    def workflow_get(self, key):
+        row = self.db.execute("SELECT lane,revision FROM workflow WHERE id=?", (key,)).fetchone()
+        return dict(lane=row[0], revision=row[1]) if row else dict(lane="inbox", revision=0)
+
+    def workflow_canonical(self, key):
+        row = self.db.execute("SELECT canonical FROM workflow_alias WHERE alias=?", (key,)).fetchone()
+        return row[0] if row else key
+
+    def workflow_move(self, key, lane, revision):
+        with self.db:
+            self.db.execute("BEGIN IMMEDIATE")
+            # A revision belongs to one identity. Never redirect an old run edit
+            # into a session, including when discovery races the HTTP checks.
+            if self.db.execute("SELECT 1 FROM workflow_alias WHERE alias=?", (key,)).fetchone():
+                return None, {"error": "Workflow identity changed; refresh before moving"}
+            current = self.workflow_get(key)
+            if current["revision"] != revision:
+                return None, current
+            result = dict(lane=lane, revision=revision + 1)
+            latest = self.db.execute("SELECT MAX(edited) FROM workflow").fetchone()[0]
+            edited = max(time.time(), latest + 0.000001) if latest is not None else time.time()
+            self.db.execute("INSERT INTO workflow VALUES (?,?,?,?) ON CONFLICT(id) DO UPDATE SET lane=excluded.lane,revision=excluded.revision,edited=excluded.edited",
+                            (key, lane, result["revision"], edited))
+            return result, None
+
+    def workflow_reconcile(self, canonical, aliases):
+        """Move the latest explicit run edit to its discovered session."""
+        with self.db:
+            self.db.execute("BEGIN IMMEDIATE")
+            ids = [canonical, *aliases]
+            rows = self.db.execute("SELECT id,lane,revision,edited FROM workflow WHERE id IN (" +
+                                   ",".join("?" for _ in ids) + ") ORDER BY edited DESC,id", ids).fetchall()
+            current = next((row for row in rows if row[0] == canonical), None)
+            # Discovery is not a manual edit. Preserve the explicit edit time,
+            # prefer the canonical record on ties, and advance its revision.
+            if rows and (current is None or rows[0][3] > current[3]):
+                _old, lane, _rev, edited = rows[0]
+                revision = max(row[2] for row in rows) + 1
+                self.db.execute("INSERT INTO workflow VALUES (?,?,?,?) ON CONFLICT(id) DO UPDATE SET lane=excluded.lane,revision=excluded.revision,edited=excluded.edited",
+                                (canonical, lane, revision, edited))
+            for alias in aliases:
+                self.db.execute("INSERT OR REPLACE INTO workflow_alias VALUES (?,?)", (alias, canonical))
+            return self.workflow_get(canonical)
 
     def ingest(self, raw):
         return self.ingest_many([raw])

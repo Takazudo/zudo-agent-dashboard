@@ -21,6 +21,10 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y tmux
       - run: bash scripts/check.sh
       - run: python -m pip wheel --no-deps --wheel-dir dist .
+      - run: python scripts/check-wheel.py dist/*.whl
+      - run: python -m pip install build
+      - run: python -m build --sdist --outdir dist .
+      - run: python scripts/check-sdist.py dist/*.tar.gz
       - run: python -m pip install --no-deps dist/*.whl
       - name: Verify installed setup runner outside checkout
         working-directory: '${{ runner.temp }}'
@@ -42,6 +46,8 @@ jobs:
       - name: Install isolated browser PTY fixture dependency
         run: sudo apt-get update && sudo apt-get install -y tmux
       - run: npm ci
+      - run: npm run build:editor
+      - run: git diff --exit-code -- zudo_agent/web/editor.js
       - run: npx playwright-core install --with-deps chromium
       - run: npm run test:browser
       - uses: actions/upload-artifact@v4

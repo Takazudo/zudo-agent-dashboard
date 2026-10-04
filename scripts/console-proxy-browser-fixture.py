@@ -12,7 +12,7 @@ from zudo_agent.console_proxy import make_proxy
 def start(backend, directory):
     class SimulatedServe(BaseHTTPRequestHandler):
         def proxy(self):
-            headers = {k: self.headers[k] for k in ("Authorization", "Origin", "Content-Type", "X-Console-CSRF") if k in self.headers}
+            headers = {k: self.headers[k] for k in ("Authorization", "Origin", "Content-Type", "X-Console-CSRF", "X-Workflow-CSRF") if k in self.headers}
             headers.update({"Host": authority, "X-Forwarded-Host": authority,
                             "X-Forwarded-Proto": "https", "Tailscale-User-Login": "fixture@example.test"})
             body = self.rfile.read(int(self.headers.get("Content-Length", "0")))

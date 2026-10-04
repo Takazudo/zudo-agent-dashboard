@@ -3,9 +3,20 @@
   "private": true,
   "scripts": {
     "check": "node --check zudo_agent/web/app.js && node --check zudo_agent/web/console.js",
-    "test:browser": "node scripts/browser-check.cjs && node scripts/console-browser-check.cjs && ZUDO_BROWSER_PROXY=1 node scripts/console-browser-check.cjs"
+    "check:frontend": "node --check zudo_agent/web/app.js && node --check zudo_agent/web/console.js && node scripts/check-editor.cjs && node scripts/round08-home-check.cjs && node scripts/round08-detail-check.cjs",
+    "test:browser": "npm run check:frontend && node scripts/browser-check.cjs && node scripts/console-browser-check.cjs && ZUDO_BROWSER_PROXY=1 node scripts/console-browser-check.cjs",
+    "build:editor": "esbuild editor-src/composer.js --bundle --format=iife --target=es2022 --minify --legal-comments=eof --outfile=zudo_agent/web/editor.js",
+    "check:editor": "node scripts/check-editor.cjs"
   },
   "devDependencies": {
-    "playwright-core": "1.59.1"
+    "playwright-core": "1.59.1",
+    "esbuild": "0.28.2",
+    "jsdom": "30.1.2"
+  },
+  "dependencies": {
+    "@codemirror/commands": "6.10.2",
+    "@codemirror/state": "6.7.6",
+    "@codemirror/view": "6.43.13",
+    "@replit/codemirror-vim": "6.4.0"
   }
 }

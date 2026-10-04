@@ -1,7 +1,7 @@
 # Zudo Agent Dashboard
 
 A read-only, local-first view of agent work across projects and individual runs.
-Python 3.11+ on Linux/WSL or macOS, SQLite, and a dependency-free browser UI.
+Python 3.11+ on Linux/WSL or macOS, SQLite, and a self-contained browser UI.
 The default mode has no terminal capture or control. An optional, separately
 authorized [local pane console](docs/pane-console.md) provides human terminal
 control. No transcript scraping or public hosting is included.
@@ -37,9 +37,10 @@ python3 -m zudo_agent --config config.local.json serve
 ```
 
 The foreground server polls every five seconds. Stop it with Ctrl-C. It binds
-only `127.0.0.1`; there is deliberately no public-bind option, write endpoint,
-remote asset, or service installation. WSL users can open the loopback URL in a
-browser if their existing WSL localhost forwarding supports it.
+only `127.0.0.1`; there is deliberately no public-bind option, terminal-control
+endpoint in the default mode, remote asset, or service installation. WSL users
+can open the loopback URL in a browser if their existing WSL localhost forwarding
+supports it.
 
 Configuration fields:
 
@@ -196,19 +197,29 @@ timestamps cannot be semantically deduplicated reliably.
 ```sh
 bash scripts/check.sh
 python3 -m pip wheel --no-deps --wheel-dir dist .
-# Optional browser QA using an available playwright-core and its Chromium:
+python3 scripts/check-wheel.py dist/*.whl
+python3 -m pip install build
+python3 -m build --sdist --outdir dist .
+python3 scripts/check-sdist.py dist/*.tar.gz
 npm ci
+npm run build:editor
+git diff --exit-code -- zudo_agent/web/editor.js
+npm run check:frontend
+# Chromium must be installed for browser QA.
 npx playwright-core install chromium
 npm run test:browser
 ```
 
-The browser script requires `playwright-core` to be resolvable (a local dev
-install or `NODE_PATH` to an existing installation), and a matching installed
-Chromium. It starts and terminates its own sample server. On machines using
-`~/.codex/scripts/heavy-guard.sh`, run browser QA through that guard. Screenshots
-go to ignored `test-results/`. CI runs unit/syntax checks, builds the Python
-wheel on 3.11–3.13, and runs sample-only Chromium QA. No TypeScript or separate
-frontend build is required.
+The browser QA uses the pinned `playwright-core`, starts and terminates its own
+sample server and isolated synthetic tmux fixtures, and writes screenshots to
+ignored `test-results/`. Browser checks cover the dashboard plus the pane console
+directly and through a disposable local HTTPS adapter; they never connect to user
+panes or use user credentials. Fixtures use an isolated public test password and
+synthetic data. The editor bundle is generated locally from pinned CodeMirror 6
+and Vim sources. CI verifies a clean reproducible bundle, focused frontend checks,
+Python 3.11–3.13 wheels and source archives, bundled assets/notices, installed
+setup commands outside the checkout, and Chromium fixtures. No TypeScript build
+is used.
 
 Tests cover discovery across sessions/windows/panes, restarts, missing and
 disconnected processes, stale evidence, out-of-order and duplicate events,
@@ -227,20 +238,31 @@ sample isolation, loopback binding, Host validation, and read-only HTTP.
   SQLite history is local, retained until you remove the database while stopped;
   there is no long-term archival/retention UI. Intended for a modest personal
   workspace, not unbounded fleet telemetry.
-- Local-mode GET endpoints remain unauthenticated loopback only. Hub GETs require
+- Observation GET endpoints remain unauthenticated loopback only. Hub GETs require
   a separate viewer credential; ingestion requires device credentials. Both use
   strict Host validation and no CORS. Local processes can read local observations.
-- No commands are sent to existing tmux panes, and no approval decisions are made.
+- Observation and hub routes never send commands to tmux panes or make approval
+  decisions. Only the separately authorized local pane console can send input,
+  after an explicit human action.
 
 ### Optional pane console
 
 The separately authenticated, loopback-only [pane console](docs/pane-console.md)
-controls an explicitly selected existing tmux pane after separate activation
-approval and explicit human enablement. It supports text/keyboard input and
-resize with live plain-text screen snapshots. Input can execute shell commands,
-including after an agent exits to its shell. It is off by default, and each
-connection starts read-only. Terminal text is never forwarded or stored in
-observation history. The multi-device hub remains observation-only.
+offers bounded recent previews and an optional human-operated view of an
+explicitly selected existing tmux pane. **Connect** stays read-only; the distinct
+**Terminal input** action explicitly enables the named pane when policy permits.
+Output is limited to 500 recent lines/128 KiB and remains in memory. Compose uses
+real CodeMirror 6; the input panel starts hidden and manual workflow lanes and
+browser appearance preferences are stored separately from terminal text. A
+known stale or disconnected session can still receive a manual lane label while
+its evidence is shown as uncertain; an ended or absent run cannot be moved.
+Per-pane drafts stay in the open detail frame and survive pane changes within
+the same session. Session changes, detail close, disconnect, and reconnect clear
+them. Closing the input panel
+disables browser input immediately and requests server revocation; it cannot be
+re-enabled until revocation is confirmed. A failed revocation disconnects the
+lease. Input can reach the shell after an agent exits and may execute shell
+commands. The multi-device hub remains observation-only.
 
 For a separately approved phone/desktop route, see the optional
 [Tailscale console proxy adapter](docs/tailscale-console-proxy.md). It preserves

@@ -19,9 +19,11 @@ MAX_RESPONSE = 2 * 1024 * 1024
 IO_TIMEOUT = 5
 REQUEST_TIMEOUT = 10
 GET_ROUTES = {"/", "/app.js", "/style.css", "/console.html", "/console.js",
-              "/api/snapshot", "/api/console/status", "/api/console/bootstrap"}
+              "/preferences.js", "/tokens.css", "/dashboard.css", "/detail.css",
+              "/editor.js", "/THIRD_PARTY_NOTICES.txt", "/favicon.svg", "/api/workflow",
+              "/api/snapshot", "/api/console/status", "/api/console/bootstrap", "/api/console/workflow"}
 POST_ROUTES = {"/api/console/" + action for action in
-               ("targets", "open", "screen", "close", "control", "send", "resize")}
+               ("targets", "open", "screen", "preview", "close", "control", "send", "resize", "workflow")} | {"/api/workflow"}
 
 
 def settings(external_origin, allowed_login, backend_port, trust_local_serve):
@@ -134,11 +136,12 @@ def make_proxy(external_origin, allowed_login, backend_port, port=46208, *, trus
             if auth:
                 outgoing["Authorization"] = auth[0]
             if self.command == "POST":
-                csrf = self.one("X-Console-CSRF")
+                csrf_name = "X-Workflow-CSRF" if self.path in {"/api/workflow", "/api/console/workflow"} else "X-Console-CSRF"
+                csrf = self.one(csrf_name)
                 if self.one("Content-Type") != "application/json" or not csrf or len(csrf) > 128:
                     self.reply(403)
                     return
-                outgoing.update({"Origin": "http://" + backend_host, "X-Console-CSRF": csrf,
+                outgoing.update({"Origin": "http://" + backend_host, csrf_name: csrf,
                                  "Content-Type": "application/json"})
             upstream = http.client.HTTPConnection("127.0.0.1", backend_port, timeout=IO_TIMEOUT)
             timer = None
