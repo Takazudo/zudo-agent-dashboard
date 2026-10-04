@@ -18,7 +18,7 @@ MAX_BODY = 32768
 MAX_RESPONSE = 2 * 1024 * 1024
 IO_TIMEOUT = 5
 REQUEST_TIMEOUT = 10
-GET_ROUTES = {"/", "/app.js", "/style.css", "/console.html", "/console.js",
+GET_ROUTES = {"/", "/app.js", "/commands.js", "/style.css", "/console.html", "/console.js",
               "/preferences.js", "/tokens.css", "/dashboard.css", "/detail.css",
               "/editor.js", "/THIRD_PARTY_NOTICES.txt", "/favicon.svg", "/api/workflow",
               "/api/snapshot", "/api/console/status", "/api/console/bootstrap", "/api/console/workflow"}

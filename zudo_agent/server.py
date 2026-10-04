@@ -189,7 +189,7 @@ def make_server(config, db_path, port=8765, sample=False, console_policy=None):
                             store.close()
                 body = json.dumps(data).encode()
                 mime = "application/json"
-            elif route in {"/", "/app.js", "/style.css", "/console.html", "/console.js", "/preferences.js",
+            elif route in {"/", "/app.js", "/commands.js", "/style.css", "/console.html", "/console.js", "/preferences.js",
                            "/tokens.css", "/dashboard.css", "/detail.css", "/editor.js", "/THIRD_PARTY_NOTICES.txt", "/favicon.svg"}:
                 name = "index.html" if route == "/" else route[1:]
                 body = (assets / name).read_bytes()

@@ -333,7 +333,7 @@ def make_hub_server(registry, db_path, bind="127.0.0.1", port=8765, cert=None, k
                     self.reply(503, b'{"error":"Workflow temporarily unavailable"}')
                 finally:
                     if store: store.close()
-            elif route in {"/", "/app.js", "/style.css", "/preferences.js", "/tokens.css", "/dashboard.css", "/detail.css", "/editor.js", "/THIRD_PARTY_NOTICES.txt", "/favicon.svg"}:
+            elif route in {"/", "/app.js", "/commands.js", "/style.css", "/preferences.js", "/tokens.css", "/dashboard.css", "/detail.css", "/editor.js", "/THIRD_PARTY_NOTICES.txt", "/favicon.svg"}:
                 name = "index.html" if route == "/" else route[1:]
                 mime = "text/html" if route == "/" else "text/javascript" if name.endswith(".js") else "text/css" if name.endswith(".css") else "image/svg+xml" if name.endswith(".svg") else "text/plain"
                 self.reply(200, (assets / name).read_bytes(), mime)
