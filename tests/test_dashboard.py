@@ -340,6 +340,12 @@ class Fixtures(unittest.TestCase):
             data = json.load(response)
             self.assertEqual(data["mode"], "sample")
             self.assertIn("frame-ancestors 'none'", response.headers["Content-Security-Policy"])
+        with urllib.request.urlopen(base + "/commands.js") as response:
+            body = response.read().decode()
+            self.assertEqual(response.status, 200)
+            self.assertIn("javascript", response.headers["Content-Type"])
+            self.assertIn("script-src 'self'", response.headers["Content-Security-Policy"])
+            self.assertIn("window.DashboardCommands", body)
         for request, status in [(urllib.request.Request(base, method="POST", data=b"{}"), 501),
                                 (urllib.request.Request(base, headers={"Host": "evil.example"}), 403),
                                 (urllib.request.Request(base+"/../config.local.json"), 404)]:

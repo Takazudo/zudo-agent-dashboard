@@ -146,6 +146,21 @@ class HubFixtures(unittest.TestCase):
         self.addCleanup(server.shutdown)
         return server
 
+    def test_hub_serves_dashboard_commands_asset(self):
+        server = self.server()
+        connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+        self.addCleanup(connection.close)
+        viewer = "Basic " + base64.b64encode(("viewer:" + VIEWER).encode()).decode()
+        connection.request("GET", "/commands.js", headers={
+            "Host": f"127.0.0.1:{server.server_port}", "Authorization": viewer
+        })
+        response = connection.getresponse()
+        body = response.read().decode()
+        self.assertEqual(response.status, 200)
+        self.assertIn("javascript", response.getheader("Content-Type", ""))
+        self.assertIn("script-src 'self'", response.getheader("Content-Security-Policy", ""))
+        self.assertIn("window.DashboardCommands", body)
+
     def test_authenticated_http_two_devices_viewer_and_spoofing(self):
         server = self.server()
         url = f"http://127.0.0.1:{server.server_port}"

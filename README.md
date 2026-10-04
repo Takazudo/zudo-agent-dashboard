@@ -22,6 +22,10 @@ python3 -m zudo_agent serve --sample
 Sample mode is prominently labeled, uses exclusively synthetic data, and does
 not open a database or run a collector. It is separate from live mode.
 
+In the dashboard, press **Ctrl+K** (⌘K on Mac) for the command palette or **?**
+for keyboard help. The shortcuts yield to editable fields and the terminal;
+header buttons remain available while you edit.
+
 ## Local observations
 
 For one shared dashboard across devices, see [multiple-device setup](docs/multiple-devices.md).

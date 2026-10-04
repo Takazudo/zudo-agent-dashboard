@@ -97,6 +97,13 @@ class ProxyFixtures(unittest.TestCase):
         self.assertEqual(self.post("targets", {})[0], 200)
         self.assertEqual(self.post("targets", {}, changes={"Authorization": None})[0], 401)
 
+    def test_dashboard_commands_asset_is_forwarded(self):
+        status, body, headers = self.request("/commands.js")
+        self.assertEqual(status, 200)
+        self.assertIn("javascript", headers.get("Content-Type", ""))
+        self.assertIn("script-src 'self'", headers.get("Content-Security-Policy", ""))
+        self.assertIn(b"window.DashboardCommands", body)
+
     def test_authenticated_workflow_route_and_workflow_csrf_forwarding(self):
         def respond(handler):
             self.assertEqual(handler.path, "/api/console/workflow")
@@ -173,7 +180,7 @@ class ProxyFixtures(unittest.TestCase):
         status, body, headers = self.request(method="UNKNOWN_FIXTURE")
         self.assertEqual(status, 501); self.assertEqual(body, b"{}")
         self.assertEqual(headers["Cache-Control"], "no-store")
-        for path in ("/api/console/bootstrap?x", "http://evil.test/", "/api/ingest", "/%61pi/console/bootstrap"):
+        for path in ("/api/console/bootstrap?x", "http://evil.test/", "/api/ingest", "/%61pi/console/bootstrap", "/commands.js?x"):
             self.assertEqual(self.request(path)[0], 404)
         for changes, expected in (({"Content-Length": "32769"}, 413), ({"Content-Length": "-1"}, 400), ({"Transfer-Encoding": "chunked"}, 400), ({"Expect": "100-continue"}, 400)):
             self.assertEqual(self.request(changes=changes)[0], expected)
