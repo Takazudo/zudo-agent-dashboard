@@ -89,3 +89,22 @@ Rollback means reverting the console process configuration while retaining every
 new live hook write. **Never restore an old backup over the hook-written live
 database.** Resolving conflicts or reversing imported rows requires a separately
 reviewed transaction; a whole-file restore is not a safe rollback.
+
+## Background preview refresh
+
+Home refresh serializes the complete snapshot, authorized workflow discovery and
+bounded capture batch. Timer ticks and repeated refresh clicks join that batch;
+they cannot start a competing discovery while capture is pending. There is no
+page navigation or automatic terminal input in this cycle.
+
+A temporary busy/unavailable discovery or HTTP failure retains the last known
+session grouping. Captures are explicitly marked **STALE · last capture · retrying**;
+inspection and workflow moves are disabled until discovery succeeds. Cached output
+expires after 60 seconds without successful capture and exists only in page
+memory. A denied authentication response or a successful discovery that removes
+or replaces a target immediately removes its capture, even if text is selected.
+
+Cards are updated in place. Unchanged nodes, focused controls, lane scroll and
+selected capture text survive background updates. Selected capture text is held
+for copying and marked **Selected capture · updates paused**; revocation and
+expiry still take precedence. No stale capture is relabeled as a new target.

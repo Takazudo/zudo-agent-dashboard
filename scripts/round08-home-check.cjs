@@ -21,7 +21,7 @@ w.matchMedia = () => ({matches:false,addEventListener(){}});
 w.setInterval = () => 1;
 w.fetch = async (url,options={}) => {
   if(url==='/api/snapshot') return {ok:true,json:async()=>snapshot};
-  if(['/api/workflow','/api/console/workflow'].includes(url) && !options.method) { workflowReads.push(url);if(authenticated){workflow.run_keys[0].canonical='session-key';workflow.items['session-key']={lane:'done',revision:3};workflow.sessions=[{id:'session-key',session_id:'session-id',project:'project',machine:'device',panes:['pane-id'],runs:['run-a']}]} return {ok:true,json:async()=>workflow}; }
+  if(['/api/workflow','/api/console/workflow'].includes(url) && !options.method) { workflowReads.push(url);if(authenticated){workflow.run_keys[0].canonical='session-key';workflow.items['session-key']={lane:'done',revision:3};workflow.sessions=[{id:'session-key',session_id:'session-id',project:'project',machine:'device',panes:['pane-id'],runs:['run-a']}];workflow.discovery={status:'ready',targets:[{project:'project',machine:'device',id:'pane-id',session_id:'session-id',workflow_id:'session-key',run:'run-a',pane:'%1',foreground:'agent'}]}} return {ok:true,json:async()=>workflow}; }
   if(url==='/api/console/status') return {ok:true,json:async()=>({enabled:true})};
   if(url==='/api/console/bootstrap'){authenticated=true;snapshot.collectors[0].status='connected';return {ok:true,json:async()=>({csrf:'console-token',identity:'fixture',allow_input:false})}}
   if(url==='/api/console/targets')return {ok:true,json:async()=>({targets:[{project:'project',machine:'device',id:'pane-id',session_id:'session-id',workflow_id:'session-key',run:'run-a',pane:'%1',foreground:'agent'}]})};
