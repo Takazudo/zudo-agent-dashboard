@@ -61,6 +61,12 @@ const cards=()=>[...d.querySelectorAll('.session-card')];
  await w.testEval("move('session-0','progress')");assert.equal(d.querySelector('[data-session-id="session-0"] select').value,'review');
  release();await pendingCycle;assert.equal(d.querySelector('[data-session-id="session-0"] select').value,'review','old capture cannot repaint pre-conflict workflow');
  w.fetch=normalFetch;
+ // Closing detail during handoff must not load a delayed iframe afterwards.
+ const inspector=d.querySelector('#inspector');inspector.showModal=function(){this.open=true};inspector.close=function(){this.open=false};
+ holdNext=true;const handoffCycle=tick();await flush();assert.equal(active,1);
+ const opening=w.testEval("openInspector('session-0')");assert.equal(inspector.open,true);assert.equal(d.querySelector('#console-frame').src,'about:blank');
+ w.testEval('closeInspector()');release();await Promise.all([handoffCycle,opening]);
+ assert.equal(inspector.open,false);assert.equal(d.querySelector('#console-frame').src,'about:blank','canceled open cannot revive an iframe after the old read drains');
  discovery='denied';await tick();assert.equal(w.testEval('targets.length'),0);assert.equal(w.testEval('previewsAllowed'),false);
  assert.equal(cards().length,9);assert.doesNotMatch(d.querySelector('#session-surface').textContent,/CAPTURE/);
  // Old unauthenticated JSON cannot overwrite a subsequently authenticated mapping.

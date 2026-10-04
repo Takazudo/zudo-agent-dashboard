@@ -6,7 +6,7 @@ const {createRequire} = require("node:module");
 const repo = path.resolve(__dirname, "..");
 const {JSDOM} = createRequire(path.join(repo, "package.json"))("jsdom");
 const html = fs.readFileSync(path.join(repo, "zudo_agent/web/console.html"), "utf8");
-const script = fs.readFileSync(path.join(repo, "zudo_agent/web/console.js"), "utf8");
+const script = fs.readFileSync(process.env.ZUDO_CONSOLE_SOURCE || path.join(repo, "zudo_agent/web/console.js"), "utf8");
 const wait = () => new Promise(resolve => setTimeout(resolve, 12));
 async function waitFor(predicate, message, timeout = 1500) {
   const started = Date.now();
@@ -39,12 +39,13 @@ async function fixture(hash, {manualIntervals = false} = {}) {
     w.setInterval = callback => { intervals.push(callback); return intervals.length; };
     w.clearInterval = () => {};
   }
-  let nextLease = 0, pauseScreen = false, releaseScreen, pauseClose = false, releaseClose, busyNextScreen = false;
+  let nextLease = 0, pauseScreen = false, releaseScreen, pauseClose = false, releaseClose, busyNextScreen = false, failedScreen = 0;
   w.fetch = async (url, options={}) => {
     const action = url.split("/").at(-1); const body = options.body ? JSON.parse(options.body) : {};
     calls.push({action,body});
     if (action === "close" && pauseClose) { pauseClose = false; await new Promise(resolve => { releaseClose = resolve; }); }
     if (action === "screen" && pauseScreen) { pauseScreen = false; await new Promise(resolve => { releaseScreen = resolve; }); }
+    if (action === "screen" && failedScreen) { const status = failedScreen; failedScreen = 0; return {ok:false,status,json:async()=>({})}; }
     if (action === "screen" && busyNextScreen) { busyNextScreen = false; return {ok:false,status:429,json:async()=>({})}; }
     const data = action === "bootstrap" ? {csrf:"token",identity:"tester",allow_input:true} :
       action === "targets" ? {targets} : action === "open" ? {lease:`lease-${++nextLease}`,expires_in:120,sequence:1} :
@@ -57,7 +58,7 @@ async function fixture(hash, {manualIntervals = false} = {}) {
     dom,w,editor,calls,editorCallbacks,
     holdScreen:()=>{pauseScreen=true}, releaseScreen:()=>releaseScreen?.(),
     holdClose:()=>{pauseClose=true}, releaseClose:()=>releaseClose?.(),
-    busyNextScreen:()=>{busyNextScreen=true}, tickIntervals:()=>intervals.forEach(callback=>callback())
+    failNextScreen:status=>{failedScreen=status}, busyNextScreen:()=>{busyNextScreen=true}, tickIntervals:()=>intervals.forEach(callback=>callback())
   };
 }
 (async () => {
@@ -96,15 +97,46 @@ async function fixture(hash, {manualIntervals = false} = {}) {
   const panel = polling.w.document.getElementById("console-toggle");
   polling.w.document.getElementById("console-connect").click(); await wait();
   polling.holdScreen(); polling.w.document.getElementById("console-refresh").click(); await wait();
-  assert.equal(panel.disabled,true,"activation during pending poll waits until safe");
-  polling.releaseScreen(); await wait();
+  assert.equal(panel.disabled,false,"background capture never pulses the foreground input control");
+  assert.equal(polling.w.document.getElementById("console-refresh").disabled,false,"background capture keeps Refresh stable");
   panel.click(); await wait();
+  assert.equal(polling.calls.some(c=>c.action==='control'&&c.body.enabled),false,"explicit activation waits behind the capture transport");
+  polling.releaseScreen(); await wait();
+  assert.equal(polling.editor.enabled,true,"explicit activation completes after capture");
   polling.holdScreen(); polling.w.document.getElementById("console-refresh").click(); await wait();
   assert.equal(panel.disabled,false,"closing input remains available during pending poll");
+  assert.equal(polling.editor.enabled,true,"background capture does not reconfigure or disable an active composer");
   panel.click();
   assert.equal(polling.editor.enabled,false,"closing stops local input immediately");
   polling.releaseScreen(); await wait();
   polling.dom.window.close();
+  for (const action of ["send", "resize", "activate"]) {
+    const canceled = await fixture("project=p&id=a&session=s", {manualIntervals:true});
+    const c$ = id => canceled.w.document.getElementById(id);
+    c$("console-connect").click(); await wait();
+    if (action !== "activate") { c$("console-toggle").click(); await wait(); }
+    canceled.holdScreen(); c$("console-refresh").click(); await wait();
+    const before = canceled.calls.length;
+    canceled.editor.value = "must not dispatch";
+    c$(action === "activate" ? "console-toggle" : `console-${action}`).click(); await wait();
+    c$("console-toggle").click();
+    assert.equal(canceled.editor.enabled, false, "close immediately disables local input");
+    canceled.releaseScreen(); await wait();
+    assert.equal(canceled.calls.slice(before).some(c => c.action === "send" || c.action === "resize" || (c.action === "control" && c.body.enabled)), false, `close cancels queued ${action} before dispatch`);
+    assert.ok(canceled.calls.slice(before).some(c => c.action === "control" && !c.body.enabled), "server revocation still dispatches");
+    assert.equal(c$("console-screen").textContent, "hello", "canceling undispatched input retains read-only view");
+    canceled.dom.window.close();
+  }
+  const revoked = await fixture("project=p&id=a&session=s",{manualIntervals:true});
+  const revoke$ = id => revoked.w.document.getElementById(id);
+  revoke$("console-connect").click();await waitFor(()=>revoke$("console-sampled").textContent.startsWith("Sampled "),"initial capture");
+  revoked.holdScreen();revoked.failNextScreen(403);revoke$("console-refresh").click();await wait();
+  revoke$("console-toggle").click();await wait();
+  assert.equal(revoked.calls.some(c=>c.action==='control'&&c.body.enabled),false);
+  revoked.releaseScreen();await waitFor(()=>!revoke$("console-connect").disabled,"denial disconnect");await wait();
+  assert.equal(revoked.calls.some(c=>c.action==='control'&&c.body.enabled),false,"denied capture cancels queued activation before dispatch");
+  assert.equal(revoked.editor.enabled,false);assert.equal(revoke$("console-screen").textContent,"");
+  revoked.dom.window.close();
   const switching = await fixture("project=p&id=a&session=s",{manualIntervals:true});
   const switch$ = id => switching.w.document.getElementById(id);
   switch$("console-connect").click();
