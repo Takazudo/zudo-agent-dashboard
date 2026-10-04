@@ -12,7 +12,7 @@
   const keyboardKeys = {Enter: "\r", Tab: "\t", Escape: "\x1b", Backspace: "\x7f", Delete: "\x1b[3~", ArrowUp: keys.up, ArrowDown: keys.down, ArrowRight: keys.right, ArrowLeft: keys.left, Home: "\x1b[H", End: "\x1b[F", PageUp: "\x1b[5~", PageDown: "\x1b[6~"};
   function text(id, value) { if ($(id).textContent !== value) $(id).textContent = value; }
   function status(message) { text("console-status", message); }
-  function cancelComposition() { composing = false; discardComposition = true; $("console-keyboard").value = ""; }
+  function cancelComposition() { if (composing) discardComposition = true; composing = false; $("console-keyboard").value = ""; }
   function directActive() { return !!lease && control && mode === "direct" && !collapsed; }
   function target() { return targets.find(t => t.id === $("console-run").value && t.project === $("console-project").value); }
   function buttons() {
@@ -70,6 +70,7 @@
     const top = viewport.scrollTop, left = viewport.scrollLeft;
     latestFrame = null;
     viewport.textContent = value;
+    screenHeight = viewport.scrollHeight; screenClientHeight = viewport.clientHeight;
     viewport.scrollTop = following ? viewport.scrollHeight : top;
     viewport.scrollLeft = left;
     viewState();
@@ -165,6 +166,10 @@
   document.querySelectorAll("[data-key]").forEach(button => button.addEventListener("click", () => enqueue(keys[button.dataset.key])));
   $("console-resize").addEventListener("click", () => operate("resize", {cols: Number($("console-cols").value), rows: Number($("console-rows").value)}));
   const keyboard = $("console-keyboard");
+  // A new paste or tap is explicit fresh intent after a cancelled IME session.
+  // Merely restoring focus must not release late composition/input events.
+  keyboard.addEventListener("paste", () => { if (directActive() && !composing) discardComposition = false; });
+  keyboard.addEventListener("pointerdown", () => { if (directActive() && !composing) discardComposition = false; });
   keyboard.addEventListener("compositionstart", () => {
     if (!directActive()) { cancelComposition(); return; }
     composing = true; discardComposition = false;
@@ -191,11 +196,15 @@
     if (value) { event.preventDefault(); enqueue(value); }
   });
   keyboard.addEventListener("blur", () => { if (composing) cancelComposition(); });
-  // Cancel before pointer-triggered blur can commit a direct IME candidate.
-  for (const button of document.querySelectorAll("[data-mode], #console-toggle, #console-info")) {
+  // Capture all outside pointer transitions, including a checkbox label's
+  // forwarded click, before focus loss can commit a direct IME candidate.
+  document.addEventListener("pointerdown", event => {
+    if (composing && event.target !== keyboard) cancelComposition();
+  }, true);
+  // Remember input focus before a panel action takes it.
+  for (const button of document.querySelectorAll("[data-mode], #console-toggle, #console-info, #console-project, #console-run, #console-close, #console-control")) {
     button.addEventListener("pointerdown", () => {
       if (!collapsed && dock.contains(document.activeElement)) restoreFocus = document.activeElement;
-      if (composing) cancelComposition();
     });
   }
   function setMode(next) {
@@ -211,7 +220,13 @@
     fit();
   }
   document.querySelectorAll("[data-mode]").forEach(button => button.addEventListener("click", () => setMode(button.dataset.mode)));
+  let screenHeight = viewport.scrollHeight, screenClientHeight = viewport.clientHeight;
   viewport.addEventListener("scroll", () => {
+    if (screenHeight !== viewport.scrollHeight || screenClientHeight !== viewport.clientHeight) {
+      screenHeight = viewport.scrollHeight; screenClientHeight = viewport.clientHeight;
+      if (following) viewport.scrollTop = viewport.scrollHeight;
+      return;
+    }
     following = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 8;
     viewState();
   });
@@ -238,6 +253,7 @@
     const height = Math.round(Math.max(bounds.min, Math.min(bounds.max, value)));
     if (remember) preferredHeight = height;
     dock.style.setProperty("--dock-height", height + "px");
+    screenHeight = viewport.scrollHeight; screenClientHeight = viewport.clientHeight;
     for (const [key, value] of Object.entries({min: Math.round(bounds.min), max: Math.round(bounds.max), now: height, text: height + " pixels high"})) divider.setAttribute("aria-value" + key, String(value));
     if (following) viewport.scrollTop = viewport.scrollHeight;
   }
