@@ -37,3 +37,13 @@ The `run_keys` mapping lets clients join snapshot runs without recreating server
 ## Assets and content security
 
 The servers and Serve adapter allow only exact asset paths: `/`, `/app.js`, `/commands.js`, `/style.css`, `/console.html` (local authenticated), `/console.js`, `/preferences.js`, `/tokens.css`, `/dashboard.css`, `/detail.css`, `/editor.js`, `/THIRD_PARTY_NOTICES.txt`, `/favicon.svg`. HTML receives a fresh cryptographic `meta[name=csp-nonce]` and matching `style-src` nonce for CodeMirror's generated style elements. Scripts and assets remain same-origin; local detail uses `frame-ancestors 'self'`, while home uses `frame-ancestors 'none'`. Hub remains observation-only and does not serve the console detail.
+
+### Pane discovery status
+
+Local workflow GET responses additionally include `discovery: {status, targets}`.
+Status is `disabled`, `auth-required`, `ready`, or `unavailable`. Targets are empty
+unless console authentication succeeded and discovery completed. `ready` with an
+empty list is a successful scoped discovery; `unavailable` is a failed/busy
+lookup, never evidence of zero panes. Targets use the same sanitized, bounded,
+project-filtered representation as the console targets endpoint. Sessions and
+targets come from the same discovery pass. Hub responses remain observation-only.

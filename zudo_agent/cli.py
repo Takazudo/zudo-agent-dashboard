@@ -25,6 +25,7 @@ def main():
     server = commands.add_parser("serve", help="Foreground loopback-only collector and UI")
     server.add_argument("--port", type=int, default=8765)
     server.add_argument("--sample", action="store_true", help="Use only synthetic data; disable collector and database")
+    server.add_argument("--no-collect", action="store_true", help="Serve the shared --db without starting another metadata collector")
     server.add_argument("--console-policy", help="Opt-in owner-only pane console policy; see docs/pane-console.md")
     forward = commands.add_parser("forward", help="Foreground collector and authenticated hub forwarding")
     forward.add_argument("--once", action="store_true")
@@ -83,7 +84,7 @@ def main():
         if args.command == "serve":
             from .console import load_policy
             policy = load_policy(args.console_policy, config) if args.console_policy else None
-            serve(config, args.db, args.port, console_policy=policy)
+            serve(config, args.db, args.port, console_policy=policy, collect=not args.no_collect)
             return
         if args.command == "hook":
             payload = sys.stdin.buffer.read(65537)

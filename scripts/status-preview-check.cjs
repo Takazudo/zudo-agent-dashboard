@@ -1,0 +1,77 @@
+'use strict';
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const {JSDOM}=require('jsdom');
+const dom=new JSDOM(fs.readFileSync('zudo_agent/web/index.html','utf8'),{url:'http://127.0.0.1:8765/',runScripts:'outside-only',pretendToBeVisual:true});
+const w=dom.window;
+w.matchMedia=()=>({matches:false,addEventListener(){}});
+w.AbortSignal.timeout=()=>undefined;
+w.setInterval=()=>1;
+w.eval(fs.readFileSync('zudo_agent/web/preferences.js','utf8'));
+w.eval(fs.readFileSync('zudo_agent/web/app.js','utf8').replace(/refresh\(\)\.then\(checkConsole\);setInterval[^\n]+/,'')+';window.testEval=code=>eval(code);');
+const evaluate=code=>w.testEval(code);
+const text=()=>w.document.querySelector('#session-surface').textContent;
+(async()=>{
+ evaluate(`snapshot={mode:'live',projects:[{id:'project',runs:[{id:'agent',machine:'device',source:'tmux',state:'unknown',evidence:'metadata-only',freshness:'fresh',state_freshness:'fresh',reachability:'present',last_seen:Date.now()/1000}]}],collectors:[]};workflow={items:{},run_keys:[],sessions:[]};buildSessions();renderCards()`);
+ assert.match(text(),/Agent detected · activity unavailable/);
+ assert.match(text(),/No lifecycle events for this run/);
+ assert.match(text(),/Last seen/);
+ assert.doesNotMatch(text(),/confidence|0 panes/);
+ assert.match(text(),/authenticate previews/);
+ evaluate(`previewAccess='disabled';renderCards()`);assert.match(text(),/console is disabled/);
+ evaluate(`previewAccess='denied';renderCards()`);assert.match(text(),/authorization failed or expired/);
+ evaluate(`previewAccess='unavailable';renderCards()`);assert.match(text(),/discovery unavailable/);
+ evaluate(`previewAccess='ready';previewsAllowed=true;renderCards()`);assert.match(text(),/no matching authorized local pane/);
+ evaluate(`window.waiting={...snapshot.projects[0].runs[0],source:'codex',state:'needs-attention',evidence:'lifecycle',state_at:Date.now()/1000};snapshot.projects[0].runs=[waiting];targets=[{id:'shell',workflow_id:'session',project:'project',machine:'device',pane:'%0',run:null},{id:'agent-pane',workflow_id:'session',project:'project',machine:'device',pane:'%1',run:'agent'}];workflow={items:{},run_keys:[{id:'run-key',canonical:'session',project:'project',machine:'device',run:'agent'}],sessions:[{id:'session',session_id:'session-id',project:'project',machine:'device',panes:['shell','agent-pane']}]};buildSessions();renderCards()`);
+ assert.match(text(),/Waiting for input/);assert.match(text(),/2 authorized panes/);
+ assert.match(text(),/1 No agent running · 1 Waiting for input/);
+ assert.match(text(),/Lifecycle event · codex/);assert.doesNotMatch(text(),/confidence/);
+ // A higher priority session state must never be used as the selected shell's run identity.
+ w.document.querySelector('#inspector').showModal=function(){this.open=true};
+ w.document.querySelector('#inspector').close=function(){this.open=false};
+ evaluate(`openInspector('session','shell')`);
+ assert.equal(new URL(w.document.querySelector('#console-frame').src).hash.includes('run='),false);
+ assert.match(w.document.querySelector('#inspector-activity').textContent,/No agent running/);
+ evaluate(`closeInspector();openInspector('session','agent-pane')`);
+ assert.match(w.document.querySelector('#console-frame').src,/run=agent/);
+ assert.match(w.document.querySelector('#inspector-activity').textContent,/Waiting for input/);
+ evaluate(`closeInspector();snapshot.projects[0].runs[0].state_freshness='stale';buildSessions();renderCards()`);
+ assert.match(text(),/STALE/);assert.match(text(),/Includes stale observations/);
+ // Error and waiting in later panes take precedence over idle in the first pane.
+ evaluate(`snapshot.projects[0].runs.push({...waiting,id:'idle',state:'idle'});targets[0].run='idle';workflow.run_keys.push({id:'idle-key',canonical:'session',project:'project',machine:'device',run:'idle'});buildSessions()`);
+ assert.equal(evaluate('sessions[0].primary.state'),'needs-attention');
+ evaluate(`snapshot.projects[0].runs[0].state='error-observed';buildSessions()`);
+ assert.equal(evaluate('sessions[0].primary.state'),'error-observed');
+ // Authenticated discovery refresh replaces targets atomically, including newly discovered panes.
+ const nextTargets=JSON.parse(evaluate('JSON.stringify(targets)'));
+ nextTargets.push({...nextTargets[0],id:'new-pane',pane:'%2',run:null});
+ const nextWorkflow=JSON.parse(evaluate('JSON.stringify(workflow)'));
+ nextWorkflow.sessions[0].panes.push('new-pane');
+ nextWorkflow.discovery={status:'ready',targets:nextTargets};
+ w.fetch=async()=>({ok:true,json:async()=>nextWorkflow});
+ await evaluate('loadWorkflow()');evaluate('buildSessions();renderCards()');
+ assert.match(text(),/3 authorized panes/);
+ evaluate(`sessions[0].preview={screen:'OLD FIRST PANE',target:targets[0].id,project:targets[0].project,machine:targets[0].machine};targets[0].id='replacement';workflow.sessions[0].panes[0]='replacement';buildSessions();renderCards()`);
+ assert.doesNotMatch(text(),/OLD FIRST PANE/);
+ assert.equal(evaluate('sessions[0].preview'),null);
+ // A delayed response from an earlier authorized generation must not restore output.
+ evaluate(`consoleToken='fixture';previewsAllowed=true`);
+ let finishPreview;
+ w.fetch=()=>new Promise(resolve=>{finishPreview=resolve});
+ const pending=evaluate('refreshPreviews()');
+ evaluate(`clearPreviewAccess('denied');buildSessions();renderCards()`);
+ finishPreview({ok:true,status:200,json:async()=>({screen:'OBSOLETE FIXTURE OUTPUT'})});
+ await pending;
+ assert.doesNotMatch(text(),/OBSOLETE FIXTURE OUTPUT/);
+ evaluate(`previewsAllowed=true`);
+ w.fetch=async()=>({ok:true,json:async()=>({...nextWorkflow,sessions:[],discovery:{status:'unavailable',targets:[]}})});
+ await evaluate('loadWorkflow()');evaluate('buildSessions();renderCards()');
+ assert.match(text(),/discovery unavailable/);assert.doesNotMatch(text(),/0 panes/);
+ // Denial clears every prior pane/preview mapping; it is not reported as a successful empty list.
+ w.fetch=async()=>({ok:false,status:403});
+ await evaluate('loadWorkflow()');evaluate('buildSessions();renderCards()');
+ assert.equal(evaluate('previewsAllowed'),false);assert.equal(evaluate('targets.length'),0);
+ assert.match(text(),/authorization failed or expired/);
+ evaluate(`snapshot.mode='hub';renderCards()`);assert.match(text(),/shared observations only/);
+ console.log('status and preview provenance checks passed');
+})().catch(error=>{console.error(error);process.exitCode=1}).finally(()=>w.close());
