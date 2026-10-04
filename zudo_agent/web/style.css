@@ -64,3 +64,36 @@ button.active,.primary,.all-sessions.selected,.view-switch [aria-pressed=true],.
 .card-preview:disabled,.card-title:disabled{opacity:1}
 .card-title:disabled{color:var(--text)}
 @media(max-height:600px){#workspace{padding-top:12px}.workspace-top{margin-bottom:12px}.home-health{margin-bottom:10px}.session-surface{flex-basis:280px;min-height:280px}}
+/* Compact workspace: layout state is available from preferences.js before first paint. */
+.shell{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr)}
+html[data-workspace-explorer="true"] .shell{grid-template-columns:var(--sidebar) minmax(0,1fr)}
+#sidebar{display:none}
+html[data-workspace-explorer="true"] #sidebar{display:flex}
+.app-header{min-height:57px;height:auto;gap:9px;flex-wrap:wrap;padding:7px 14px;min-width:0}
+.app-header .brand{font-size:12px;max-width:165px;overflow:hidden;text-overflow:ellipsis}
+.app-header #tree-toggle{border:1px solid var(--border-subtle);border-radius:4px}
+.header-scope{min-width:100px;flex:1 1 220px;max-width:100%;overflow:hidden}
+.header-scope h1{font-size:16px;margin:0;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block}
+.header-scope h1>span{display:inline-block;vertical-align:middle;margin-left:5px}
+.header-scope .breadcrumb{font-size:10px}
+.app-header .view-switch{margin:0}.app-header .view-switch button{min-height:31px;padding:5px 8px;font-size:11px}
+.app-header .header-settings{margin-left:0;min-height:32px;padding:5px 8px}
+.app-header .secondary{min-height:32px;padding:5px 8px}
+.header-indicator,.header-status{font-size:11px;color:var(--muted);max-width:210px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#filter-indicator,#attention-indicator{border:1px solid var(--border-subtle);padding:4px 6px;border-radius:4px}
+#attention-indicator{color:var(--warning)}
+#workspace{position:relative;padding-top:12px}
+#explorer-edge{position:absolute;left:0;bottom:18px;width:20px;height:38px;padding:1px;border:1px solid var(--border-subtle);border-radius:0 4px 4px 0;z-index:2;background:var(--surface)}
+#explorer-edge .icon{width:12px;height:12px}
+#overview-panel{display:none;flex:0 1 auto;min-height:0;overflow:auto;border-bottom:1px solid var(--border-subtle);margin-bottom:10px;padding-bottom:4px}
+html[data-workspace-overview="true"] #overview-panel{display:block}
+.overview-heading{display:flex;align-items:center;justify-content:space-between;font-size:12px;padding:2px 0 8px}
+.overview-heading button{font-size:20px;line-height:1}
+#overview-panel .home-health{margin-bottom:8px}
+#overview-panel .toolbar{margin-bottom:8px}
+#project-overview{margin-bottom:6px}
+#workspace>.notice{margin-bottom:8px}
+.session-surface{min-height:0}
+@media(max-width:900px){.app-header .view-switch button span{display:none}.header-scope{flex-basis:155px}.header-status{max-width:120px}}
+@media(max-width:650px){.shell{display:flex;flex-direction:column}.app-header{flex:0 0 auto;min-height:52px;height:auto;padding:6px 9px}.app-header .brand{display:none}.header-scope{flex:1 1 115px;min-width:90px}.header-scope h1{font-size:14px}.app-header .header-settings{width:32px}.app-header #refresh{min-height:32px}.app-header #overview-toggle{font-size:11px}.header-status{display:inline-block;max-width:135px}#filter-indicator,#attention-indicator{max-width:100%;font-size:10px}#sidebar{display:flex;visibility:hidden;transform:translateX(-101%)}html[data-workspace-explorer="true"] #sidebar{visibility:visible;transform:none}#workspace{padding-top:10px}#explorer-edge{display:none}#overview-panel{max-height:50dvh}.app-header .view-switch{flex:0 0 auto}}
+@media(max-height:600px){#overview-panel{max-height:38dvh}.app-header{min-height:46px}}

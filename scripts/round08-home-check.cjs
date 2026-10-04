@@ -6,6 +6,7 @@ const {JSDOM} = require('jsdom');
 const root = path.resolve(__dirname, '..');
 const html = fs.readFileSync(path.join(root, 'zudo_agent/web/index.html'), 'utf8');
 const app = fs.readFileSync(path.join(root, 'zudo_agent/web/app.js'), 'utf8');
+const preferences = fs.readFileSync(path.join(root, 'zudo_agent/web/preferences.js'), 'utf8');
 const run = {id:'run-a',machine:'device',source:'codex',state:'needs-attention',reachability:'disconnected',freshness:'stale',state_freshness:'stale',confidence:'reported',evidence:'Input request observed',state_at:1,last_seen:1,recent_events:[]};
 const complete = {...run,id:'run-complete',state:'completed',reachability:'present',freshness:'fresh',state_freshness:'fresh',evidence:'Completion event observed'};
 const prior = {...run,id:'run-old',state:'ended',reachability:'absent'};
@@ -16,6 +17,7 @@ const workflow = {csrf:'token',items:{'run-key':{lane:'review',revision:2},'comp
 const dom = new JSDOM(html,{url:'http://127.0.0.1:8765/',runScripts:'outside-only',pretendToBeVisual:true});
 const w = dom.window;
 w.AbortSignal.timeout = () => undefined;
+w.matchMedia = () => ({matches:false,addEventListener(){}});
 w.setInterval = () => 1;
 w.fetch = async (url,options={}) => {
   if(url==='/api/snapshot') return {ok:true,json:async()=>snapshot};
@@ -31,16 +33,17 @@ w.fetch = async (url,options={}) => {
   }
   throw Error(`Unexpected fetch ${url}`);
 };
+w.eval(preferences);
 w.eval(app);
 (async()=>{
   await new Promise(resolve=>setTimeout(resolve,30));
-  assert.match(w.document.querySelector('#notice').textContent,/Local observations/);
+  assert.match(w.document.querySelector('#mode').textContent,/Local observations/);
   assert.equal(w.document.querySelectorAll('.session-card').length,2);
   assert.match(w.document.querySelector('#session-surface').textContent,/Task completed/);
   assert.match(w.document.querySelector('.card-origin').textContent,/device \/ project/);
-  assert.match(w.document.querySelector('.observed').textContent,/Waiting for input/);
-  assert.match(w.document.querySelector('.observed').textContent,/STALE/);
-  assert.match(w.document.querySelector('.capture').textContent,/Capture unavailable/);
+  assert.match(w.document.querySelector('#session-surface').textContent,/Waiting for input/);
+  assert.match(w.document.querySelector('#session-surface').textContent,/STALE/);
+  assert.match(w.document.querySelector('#session-surface').textContent,/Capture unavailable/);
   assert.match(w.document.querySelector('#project-history').textContent,/Previous runs \(1\)/);
   assert.match(w.document.querySelector('#home-health').textContent,/offline/);
   w.document.querySelector('#view-board').click();
