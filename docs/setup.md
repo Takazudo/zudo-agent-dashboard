@@ -212,3 +212,8 @@ The integration follows the current official references checked on 2026-10-03:
 [Codex skills](https://learn.chatgpt.com/docs/build-skills).
 Those documents describe the agent-side facilities; successful setup or a
 synthetic check alone does not prove those facilities delivered a live event.
+
+For multiple local dashboards, use one shared hook/collector database and one
+collector. The second dashboard supports `serve --no-collect`. See
+[shared database and activity diagnostics](shared-database.md) before aligning
+existing split databases; preserve workflow metadata and history first.

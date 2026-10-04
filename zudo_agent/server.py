@@ -141,12 +141,15 @@ def make_server(config, db_path, port=8765, sample=False, console_policy=None):
                     ids = known_runs(snapshot)
                     sessions = []
                     authenticated = bool(console and console.authorized(self.headers))
+                    targets = []
+                    discovery = "auth-required" if console else "disabled"
                     if authenticated:
                         groups = {}
                         try:
                             targets = console.handle("targets", {})["targets"]
+                            discovery = "ready"
                         except (ConsoleError, OSError, subprocess.SubprocessError):
-                            targets = []
+                            discovery = "unavailable"
                         for target in targets:
                             group = groups.setdefault(target["workflow_id"], dict(id=target["workflow_id"],
                                 session_id=target["session_id"], project=target["project"], machine=target["machine"],
@@ -165,7 +168,8 @@ def make_server(config, db_path, port=8765, sample=False, console_policy=None):
                     if authenticated:
                         ids.update({item["canonical"]: item for item in run_keys})
                     self.reply(200, dict(csrf=workflow.csrf, lanes=list(LANES),
-                        items=workflow.state(store, ids), run_keys=run_keys, sessions=sessions))
+                        items=workflow.state(store, ids), run_keys=run_keys, sessions=sessions,
+                        discovery=dict(status=discovery, targets=targets)))
                 except sqlite3.OperationalError:
                     self.reply(503, dict(error="Workflow temporarily unavailable"))
                 finally:
@@ -248,11 +252,11 @@ def collect_loop(config, db_path, stop, interval=5):
             store.close()
 
 
-def serve(config, db_path, port, sample=False, console_policy=None):
+def serve(config, db_path, port, sample=False, console_policy=None, collect=True):
     server = make_server(config, db_path, port, sample, console_policy)
     stop = threading.Event()
 
-    worker = None if sample else threading.Thread(target=collect_loop, args=(config, db_path, stop), daemon=True)
+    worker = None if sample or not collect else threading.Thread(target=collect_loop, args=(config, db_path, stop), daemon=True)
     if worker:
         worker.start()
     print(f"{'SAMPLE' if sample else 'LOCAL'} dashboard: http://127.0.0.1:{server.server_port}", flush=True)

@@ -233,12 +233,24 @@ class WorkflowFixture(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(open_data["sessions"], [], "unauthenticated workflow reads disclose no session targets")
         self.assertNotIn(canonical, open_data["items"])
+        self.assertEqual(open_data["discovery"], {"status": "auth-required", "targets": []})
 
         status, data = request("GET", "/api/console/workflow", headers={"Authorization": authorization})
         self.assertEqual(status, 200)
         self.assertEqual(data["sessions"], [dict(id=canonical, session_id="session-fixture",
             project="example", machine="fixture", panes=["pane-fixture"], runs=[run])])
         self.assertEqual(data["run_keys"][0]["canonical"], canonical)
+        self.assertEqual(data["discovery"]["status"], "ready")
+        self.assertEqual(data["discovery"]["targets"][0]["id"], target["id"])
+        for error in (ConsoleError(429, "busy"), OSError("unavailable")):
+            with patch.object(FakeConsole, "handle", side_effect=error):
+                status, failed = request("GET", "/api/console/workflow", headers={"Authorization": authorization})
+                self.assertEqual(status, 200)
+                self.assertEqual(failed["discovery"], {"status": "unavailable", "targets": []})
+                self.assertEqual(failed["sessions"], [])
+        with patch.object(FakeConsole, "handle", return_value={"targets": []}):
+            status, empty = request("GET", "/api/console/workflow", headers={"Authorization": authorization})
+            self.assertEqual(empty["discovery"], {"status": "ready", "targets": []})
         self.assertEqual(data["items"][canonical], {"lane": "inbox", "revision": 0})
 
         body = json.dumps(dict(id=canonical, lane="review", revision=0))
