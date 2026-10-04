@@ -140,8 +140,8 @@ class ControlConnection:
 
 
 class PaneBackend:
-    FORMAT = "#{pid}\t#{session_id}\t#{pane_id}\t#{pane_pid}\t#{pane_dead}\t#{pane_current_path}\t#{pane_current_command}\t#{pane_width}\t#{pane_height}"
-    IDENTITY = ("machine", "boot", "server", "pane", "root")
+    FORMAT = "#{pid}\t#{session_id}\t#{session_created}\t#{pane_id}\t#{pane_pid}\t#{pane_dead}\t#{pane_current_path}\t#{pane_current_command}\t#{pane_width}\t#{pane_height}"
+    IDENTITY = ("machine", "boot", "server", "session", "session_created", "pane", "root")
 
     def __init__(self, config):
         self.config = config
@@ -152,10 +152,10 @@ class PaneBackend:
         targets = []
         for line in text.splitlines():
             fields = line.split("\t")
-            if len(fields) != 9:
+            if len(fields) != 10:
                 raise ConsoleError(409, "Invalid pane metadata")
-            server_id, session, pane, root_id, dead, cwd, foreground, cols, rows = fields
-            if not server_id.isdigit() or not root_id.isdigit() or not re.fullmatch(r"%[0-9]+", pane) or not re.fullmatch(r"\$[0-9]+", session):
+            server_id, session, created, pane, root_id, dead, cwd, foreground, cols, rows = fields
+            if not server_id.isdigit() or not root_id.isdigit() or not created.isdigit() or not re.fullmatch(r"%[0-9]+", pane) or not re.fullmatch(r"\$[0-9]+", session):
                 raise ConsoleError(409, "Invalid pane identity")
             server, root = table.get(int(server_id)), table.get(int(root_id))
             if dead != "0" or not server or not root:
@@ -164,10 +164,14 @@ class PaneBackend:
             target = dict(project=collector.project_for(cwd, self.config) if projects else None,
                 run=collector.run_identity(self.config["machine"], boot, agent) if agent else None,
                 machine=self.config["machine"], boot=boot, server=(server["pid"], server["start"]),
-                session=session, pane=pane, root=(root["pid"], root["start"]),
+                session=session, session_created=created, pane=pane, root=(root["pid"], root["start"]),
                 foreground="".join(c for c in foreground if not unicodedata.category(c).startswith("C"))[:128],
                 cols=int(cols), rows=int(rows))
             target["id"] = collector.digest(*(target[k] for k in self.IDENTITY))
+            target["session_id"] = collector.digest("session", target["machine"],
+                target["boot"], target["server"], session, created, target["project"])
+            target["workflow_id"] = collector.digest("workflow-session", target["machine"],
+                target["project"], target["session_id"])
             targets.append(target)
         return targets
 
@@ -200,13 +204,37 @@ class PaneBackend:
             raise ConsoleError(409, "Pane replaced or server restarted; reconnect explicitly")
         return matches[0]
 
-    def screen(self, target):
+    def _validate_project(self, target, channel):
+        current = self.parse(channel.command("list-panes -a -F '" + self.FORMAT + "'"))
+        matches = [t for t in current if all(t[k] == target[k] for k in self.IDENTITY)]
+        if len(matches) != 1 or matches[0]["project"] != target["project"]:
+            raise ConsoleError(409, "Pane left its authorized project")
+
+    def screen(self, target, strict_project=False):
         with self.connection(target) as channel:
             self.validate(target, channel)
-            screen = channel.command(f"capture-pane -p -t {target['pane']} -S 0 -E 199")
+            if strict_project:
+                self._validate_project(target, channel)
+            screen = channel.command(f"capture-pane -p -t {target['pane']} -S -500")
             current = self.validate(target, channel)
+            if strict_project:
+                self._validate_project(target, channel)
         text = "".join(c for c in screen if c in "\n\t" or not unicodedata.category(c).startswith("C"))
-        return dict(screen=text, foreground=current["foreground"], cols=current["cols"], rows=current["rows"])
+        lines = text.splitlines()
+        truncated = len(lines) > 500
+        lines = lines[-500:]
+        text = "\n".join(lines)
+        encoded = text.encode("utf-8")
+        byte_truncated = len(encoded) > 131072
+        if byte_truncated:
+            text = encoded[-131072:].decode("utf-8", "ignore")
+            lines = text.splitlines()
+        return dict(screen=text, lines=len(lines), limit=500, truncated=truncated or byte_truncated,
+                    byte_truncated=byte_truncated, foreground=current["foreground"],
+                    cols=current["cols"], rows=current["rows"])
+
+    def preview(self, target):
+        return self.screen(target, strict_project=True)
 
     def mutate(self, target, commands):
         with self.connection(target) as channel:
@@ -276,7 +304,24 @@ class Console:
             if action == "targets":
                 exact(body, set())
                 targets = [t for t in self.backend.targets() if t["project"] in self.policy["projects"]]
-                return dict(targets=[{k: t[k] for k in ("project", "run", "machine", "id", "pane", "server", "foreground", "cols", "rows")} for t in targets][:256])
+                result = []
+                for target in targets[:256]:
+                    item = {k: target[k] for k in ("project", "run", "machine", "id", "pane", "server", "foreground", "cols", "rows")}
+                    item["session_id"] = target.get("session_id") or collector.digest("session", target["machine"], target["boot"], target["server"], target["session"], target.get("session_created"), target["project"])
+                    item["workflow_id"] = target.get("workflow_id") or collector.digest("workflow-session", target["machine"], target["project"], item["session_id"])
+                    result.append(item)
+                return dict(targets=result)
+            if action == "preview":
+                exact(body, {"project", "id", "machine"})
+                if any(not isinstance(v, str) or len(v) > 128 for v in body.values()):
+                    raise ConsoleError(400, "Invalid target")
+                if body["project"] not in self.policy["projects"] or body["machine"] != self.machine:
+                    raise ConsoleError(403, "Target is not allowed on this machine")
+                matches = [t for t in self.backend.targets() if all(t[k] == body[k] for k in body)]
+                if len(matches) != 1:
+                    raise ConsoleError(409, "Pane is unavailable or ambiguous")
+                preview = getattr(self.backend, "preview", self.backend.screen)
+                return dict(**preview(matches[0]), sampled_at=time.time())
             if action == "open":
                 exact(body, {"project", "id", "machine"})
                 if any(not isinstance(v, str) or len(v) > 128 for v in body.values()):

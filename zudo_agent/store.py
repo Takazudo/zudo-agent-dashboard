@@ -38,6 +38,11 @@ class Store:
           CREATE TABLE IF NOT EXISTS collectors (
             machine TEXT PRIMARY KEY, checked REAL, connected INTEGER, panes INTEGER,
             unmatched INTEGER);
+          CREATE TABLE IF NOT EXISTS workflow (
+            id TEXT PRIMARY KEY, lane TEXT NOT NULL, revision INTEGER NOT NULL,
+            edited REAL NOT NULL);
+          CREATE TABLE IF NOT EXISTS workflow_alias (
+            alias TEXT PRIMARY KEY, canonical TEXT NOT NULL);
             """)
         except sqlite3.Error:
             self.db.close()
@@ -45,6 +50,43 @@ class Store:
 
     def close(self):
         self.db.close()
+
+    def workflow_get(self, key):
+        row = self.db.execute("SELECT lane,revision FROM workflow WHERE id=?", (key,)).fetchone()
+        return dict(lane=row[0], revision=row[1]) if row else dict(lane="inbox", revision=0)
+
+    def workflow_canonical(self, key):
+        row = self.db.execute("SELECT canonical FROM workflow_alias WHERE alias=?", (key,)).fetchone()
+        return row[0] if row else key
+
+    def workflow_move(self, key, lane, revision):
+        with self.db:
+            self.db.execute("BEGIN IMMEDIATE")
+            canonical = self.db.execute("SELECT canonical FROM workflow_alias WHERE alias=?", (key,)).fetchone()
+            key = canonical[0] if canonical else key
+            current = self.workflow_get(key)
+            if current["revision"] != revision:
+                return None, current
+            result = dict(lane=lane, revision=revision + 1)
+            self.db.execute("INSERT INTO workflow VALUES (?,?,?,?) ON CONFLICT(id) DO UPDATE SET lane=excluded.lane,revision=excluded.revision,edited=excluded.edited",
+                            (key, lane, result["revision"], time.time()))
+            return result, None
+
+    def workflow_reconcile(self, canonical, aliases):
+        """Move the latest explicit run edit to its discovered session."""
+        with self.db:
+            self.db.execute("BEGIN IMMEDIATE")
+            ids = [canonical, *aliases]
+            rows = self.db.execute("SELECT id,lane,revision,edited FROM workflow WHERE id IN (" +
+                                   ",".join("?" for _ in ids) + ") ORDER BY edited DESC", ids).fetchall()
+            if rows and rows[0][0] != canonical:
+                _old, lane, _rev, edited = rows[0]
+                existing = self.workflow_get(canonical)
+                self.db.execute("INSERT INTO workflow VALUES (?,?,?,?) ON CONFLICT(id) DO UPDATE SET lane=excluded.lane,revision=excluded.revision,edited=excluded.edited",
+                                (canonical, lane, existing["revision"] + 1, time.time()))
+            for alias in aliases:
+                self.db.execute("INSERT OR REPLACE INTO workflow_alias VALUES (?,?)", (alias, canonical))
+            return self.workflow_get(canonical)
 
     def ingest(self, raw):
         return self.ingest_many([raw])
