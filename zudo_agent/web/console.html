@@ -1,23 +1,31 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Zudo · Pane console</title><link rel="stylesheet" href="/style.css"><script src="/console.js" defer></script></head>
-<body class="console-page"><main>
-<header><div><p class="eyebrow">ZUDO / LOCAL PANE CONSOLE</p><h1>Selected pane<span>.</span></h1><p class="subtitle">Interactive input · live plain-text screen snapshots</p></div><a href="/">Back to dashboard</a></header>
-<p class="notice" id="console-status" role="status">Authenticating…</p><p id="operator"></p>
-<section class="project console-controls" aria-label="Select target">
-<label>Project<select id="console-project" disabled></select></label><label>Existing pane<select id="console-run" disabled></select></label>
-<p id="console-target">No target selected.</p>
-<div class="console-actions"><button id="console-connect" disabled>Connect to selected pane</button><button id="console-refresh" disabled>Refresh screen</button><button id="console-close" disabled>Close and clear</button></div><p id="console-expiry">Disconnected. Reconnection is always manual.</p>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content"><title>zudo-agent-dashboard</title><link rel="stylesheet" href="/style.css"><script src="/console.js" defer></script></head>
+<body class="console-page"><main class="console-app">
+<header class="console-top"><h1><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m5 7 5 5-5 5m8 0h6"/></svg>zudo-agent-dashboard</h1><a href="/"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m14 6-6 6 6 6M8 12h13"/></svg>Dashboard</a></header>
+<section class="console-targetbar" aria-label="Select target">
+<div class="console-pickers"><label class="console-sr" for="console-project">Project</label><select id="console-project" disabled></select><label class="console-sr" for="console-run">Existing pane</label><select id="console-run" disabled></select></div>
+<div class="console-actions"><button id="console-connect" disabled>Connect</button><button id="console-close" disabled>Close</button><button id="console-info"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 11v6m0-10v.1M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0"/></svg>Session info</button><button id="console-toggle" aria-expanded="true" aria-controls="console-dock"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 5h18v14H3zM7 9h10M7 13h6"/></svg><span>Hide input</span></button></div>
 </section>
-<section aria-label="Selected pane screen"><h2>Pane screen</h2><p id="console-foreground">Foreground: disconnected</p><p>Refreshes every 500 ms while connected. Plain text, up to 200 visible rows; no colors, scrollback, mouse forwarding, or continuous byte stream.</p><pre id="console-screen" tabindex="0" aria-label="Pane screen"></pre></section>
-<section class="project console-controls" aria-label="Human terminal control">
-<p class="notice warning">Input goes to this pane, including its shell after an agent exits. It can execute shell commands. Confirm the selected pane before enabling control.</p>
-<label class="console-check"><input type="checkbox" id="console-control" disabled> Enable control of this pane</label>
-<label>Interactive keyboard<textarea id="console-keyboard" disabled rows="2" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Focus here to type directly into the selected pane"></textarea></label>
-<div class="console-actions" id="console-keys"><button data-key="enter" disabled>Enter</button><button data-key="tab" disabled>Tab</button><button data-key="escape" disabled>Esc</button><button data-key="interrupt" disabled>Ctrl-C</button><button data-key="up" disabled>↑</button><button data-key="down" disabled>↓</button><button data-key="left" disabled>←</button><button data-key="right" disabled>→</button></div>
-<label>Compose text<textarea id="console-input" disabled rows="3" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Text is sent only when you press Send"></textarea></label>
-<label class="console-check"><input type="checkbox" id="console-enter" checked> Append Enter</label><button id="console-send" disabled>Send to selected pane</button>
-<p id="console-delivery" role="status">Read-only until explicitly enabled. Input is never automatically retried.</p>
-<details><summary>Resize the selected pane</summary><p>Changes the shared tmux layout; other clients may see the change. tmux may clamp dimensions.</p><label>Columns<input id="console-cols" type="number" min="20" max="300" value="80"></label><label>Rows<input id="console-rows" type="number" min="5" max="200" value="24"></label><button id="console-resize" disabled>Apply pane size</button></details>
+<p id="console-status" role="status">Authenticating…</p>
+<div class="console-layout">
+<section class="console-terminal" aria-label="Selected pane screen">
+<div class="console-termhead"><strong id="console-foreground">Foreground: disconnected</strong><span id="console-sampled"></span><button id="console-refresh" aria-label="Refresh screen" title="Refresh screen" disabled><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M20 7v5h-5M4 17v-5h5m-4-4a8 8 0 0 1 13-3l2 3M4 16l2 3a8 8 0 0 0 13-3"/></svg></button></div>
+<pre id="console-screen" tabindex="0" aria-label="Pane screen"></pre>
+<div class="console-termfoot"><span id="console-view-state">Visible pane snapshot · no scrollback</span><button id="console-latest">Latest</button></div>
 </section>
-<footer>Pane text stays in memory and is cleared on close, target change, expiry, or detected disconnect. It is not added to dashboard history.</footer>
-</main></body></html>
+<div id="console-divider" role="separator" aria-label="Resize input panel" aria-orientation="horizontal" aria-controls="console-dock" aria-valuemin="180" aria-valuemax="500" aria-valuenow="230" tabindex="0" title="Drag to resize. Arrow Up grows input; Arrow Down shrinks it."><span class="console-grip"></span><span>Drag to resize input</span></div>
+<section id="console-dock" aria-label="Human terminal control">
+<div class="console-modebar"><div class="console-modes" role="group" aria-label="Input mode"><button data-mode="compose" aria-pressed="true">Compose</button><button data-mode="direct" aria-pressed="false">Type directly</button></div><label class="console-check"><input type="checkbox" id="console-control" disabled>Enable control</label></div>
+<div class="console-entry"><textarea id="console-input" aria-label="Compose text" disabled autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Draft text… Send submits to the selected pane"></textarea><textarea id="console-keyboard" aria-label="Interactive keyboard" disabled hidden autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Typing sends immediately to the selected pane"></textarea><button id="console-send" disabled><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m3 3 18 9-18 9 4-9-4-9m4 9h14"/></svg>Send</button></div>
+<div class="console-bottom"><div class="console-keyrow" id="console-keys"><button data-key="enter" disabled>Enter</button><button data-key="tab" disabled>Tab</button><button data-key="escape" disabled>Esc</button><button data-key="interrupt" disabled>Ctrl-C</button><button data-key="up" aria-label="Up arrow" disabled>↑</button><button data-key="down" aria-label="Down arrow" disabled>↓</button><button data-key="left" aria-label="Left arrow" disabled>←</button><button data-key="right" aria-label="Right arrow" disabled>→</button></div><label class="console-check" id="console-enter-label"><input type="checkbox" id="console-enter" checked>Append Enter</label></div>
+<p id="console-mode-hint">Send submits the draft. Key buttons send immediately, including to the shell.</p>
+</section>
+</div>
+<footer class="console-foot"><span id="console-delivery" role="status">Read-only until explicitly enabled. Input is never automatically retried.</span><span>Memory only · cleared on disconnect</span></footer>
+</main>
+<dialog id="console-dialog" aria-labelledby="console-dialog-title"><div class="console-dialog-head"><h2 id="console-dialog-title">Session info</h2><button id="console-info-close" aria-label="Close session info"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m6 6 12 12M6 18 18 6"/></svg></button></div>
+<p id="console-target">No target selected.</p><p id="operator"></p><p id="console-expiry">Disconnected. Reconnection is always manual.</p>
+<p>Input goes to the selected pane, including its shell after an agent exits. It can execute shell commands. Confirm the target before enabling control.</p>
+<p>Plain-text screen snapshots every 500 ms, up to 200 visible rows. No colors, scrollback, mouse forwarding, or continuous byte stream. Pane text stays in memory and is cleared on close, target change, expiry, or detected disconnect. It is not added to dashboard history.</p>
+<details><summary>Resize the selected pane</summary><p>Changes the shared tmux layout; other clients may see the change. tmux may clamp dimensions. Resizing the input panel only changes this page.</p><div class="console-size"><label>Columns<input id="console-cols" type="number" min="20" max="300" value="80"></label><label>Rows<input id="console-rows" type="number" min="5" max="200" value="24"></label><button id="console-resize" disabled>Apply pane size</button></div></details>
+</dialog></body></html>
